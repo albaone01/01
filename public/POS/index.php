@@ -3,9 +3,11 @@ session_start();
 require_once '../../inc/config.php';
 require_once '../../inc/db.php';
 require_once '../../inc/auth.php';
+require_once '../../inc/pos_saas_schema.php';
 
 requireLogin();
 requireDevice();
+ensure_pos_saas_schema($pos_db);
 
 // Get user info from session
 $user_id = $_SESSION['pengguna_id'];
@@ -32,6 +34,9 @@ $bulan_names = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', '
 
 $hari_ini = $hari_names[date('w')];
 $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y');
+
+$shift_open = has_open_shift_today($pos_db, (int)$toko_id, (int)$user_id);
+$kasir_href = $shift_open ? 'kasir.php' : 'tutup_kasir.php?need_open_shift=1';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -347,6 +352,15 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
             border-color: var(--primary);
             transform: scale(1.02);
         }
+
+        .menu-item.disabled,
+        .menu-item.disabled:hover {
+            background: #e2e8f0;
+            color: #94a3b8;
+            border-color: #cbd5e1;
+            transform: none;
+            cursor: not-allowed;
+        }
         
         .menu-item i {
             font-size: 18px;
@@ -394,6 +408,14 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
         .quick-btn:hover {
             transform: translateY(-3px);
             box-shadow: var(--shadow-lg);
+        }
+
+        .quick-btn:disabled {
+            background: #cbd5e1 !important;
+            color: #64748b;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
         
         .quick-btn i {
@@ -480,7 +502,7 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
             <p class="welcome-subtitle">Anda login sebagai <?= htmlspecialchars($peran) ?> - Silakan pilih menu di bawah untuk memulai transaksi</p>
             
             <div class="quick-actions">
-                <button class="quick-btn" onclick="location.href='kasir.php'">
+                <button class="quick-btn" onclick="location.href='<?= htmlspecialchars($kasir_href) ?>'" <?= $shift_open ? '' : 'disabled title="Buka shift terlebih dahulu"' ?>>
                     <i class="fas fa-cash-register"></i>
                     Mulai Transaksi
                 </button>
@@ -511,7 +533,7 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
                         <i class="fas fa-cash-register"></i>
                         <span>Kas</span>
                     </a>
-                    <a href="kasir.php" class="menu-item">
+                    <a href="<?= htmlspecialchars($kasir_href) ?>" class="menu-item<?= $shift_open ? '' : ' disabled' ?>" <?= $shift_open ? '' : 'title="Buka shift terlebih dahulu"' ?>>
                         <i class="fas fa-user-tie"></i>
                         <span>Kasir</span>
                     </a>

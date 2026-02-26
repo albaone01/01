@@ -155,6 +155,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    if ($action === 'reopen_shift') {
+        if (!$shift || ($shift['status'] ?? '') !== 'closed') {
+            $err = 'Shift tidak dalam status closed.';
+        } else {
+            try {
+                $shiftId = (int)$shift['shift_id'];
+                $pos_db->begin_transaction();
+
+                // Hapus jurnal closing sebelumnya agar tidak dobel saat close ulang
+                $stDel = $pos_db->prepare("
+                    DELETE FROM jurnal_umum
+                    WHERE toko_id = ?
+                      AND sumber = 'closing_kasir'
+                      AND referensi_tabel = 'kasir_shift'
+                      AND referensi_id = ?
+                ");
+                $stDel->bind_param('ii', $tokoId, $shiftId);
+                $stDel->execute();
+                $stDel->close();
+
+                $status = 'open';
+                $st = $pos_db->prepare("
+                    UPDATE kasir_shift
+                    SET jam_tutup = NULL,
+                        kas_sistem = 0,
+                        kas_fisik = 0,
+                        selisih = 0,
+                        status = ?,
+                        catatan = CONCAT(IFNULL(catatan, ''), ' [Reopen ', DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'), ']')
+                    WHERE shift_id = ?
+                ");
+                $st->bind_param('si', $status, $shiftId);
+                $st->execute();
+                $st->close();
+
+                $pos_db->commit();
+                $msg = 'Shift berhasil dibuka ulang.';
+                $shift = get_today_shift($pos_db, $tokoId, $userId);
+            } catch (Throwable $e) {
+                $pos_db->rollback();
+                $err = 'Gagal buka ulang shift: ' . $e->getMessage();
+            }
+        }
+    }
 }
 
 $history = [];
@@ -259,6 +304,11 @@ $stHist->close();
                     kas fisik: <strong><?= rupiah((float)$shift['kas_fisik']) ?></strong>,
                     selisih: <strong><?= rupiah((float)$shift['selisih']) ?></strong>.
                 </div>
+                <form method="post" onsubmit="return confirm('Buka ulang shift hari ini? Data kas_sistem/kas_fisik/selisih closing sebelumnya akan direset.')">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf) ?>">
+                    <input type="hidden" name="action" value="reopen_shift">
+                    <button type="submit" class="btn-submit">Buka Ulang Shift Hari Ini</button>
+                </form>
             <?php endif; ?>
         </div>
 
