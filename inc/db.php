@@ -24,6 +24,22 @@ class Database {
         return $this->conn->query($sql);
     }
 
+    public function multi_query($sql) {
+        return $this->conn->multi_query($sql);
+    }
+
+    public function store_result() {
+        return $this->conn->store_result();
+    }
+
+    public function more_results() {
+        return $this->conn->more_results();
+    }
+
+    public function next_result() {
+        return $this->conn->next_result();
+    }
+
     // Transaction helpers to mirror mysqli methods
     public function begin_transaction() {
         return $this->conn->begin_transaction();

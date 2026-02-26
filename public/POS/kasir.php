@@ -5,13 +5,21 @@ require_once '../../inc/db.php';
 require_once '../../inc/auth.php';
 require_once '../../inc/functions.php';
 require_once '../../inc/csrf.php';
+require_once '../../inc/pos_saas_schema.php';
 
 requireLogin();
 requireDevice();
+ensure_pos_saas_schema($pos_db);
+
+$tokoId = (int)($_SESSION['toko_id'] ?? 0);
+$kasirId = (int)($_SESSION['pengguna_id'] ?? 0);
+if ($tokoId > 0 && $kasirId > 0 && !has_open_shift_today($pos_db, $tokoId, $kasirId)) {
+    header('Location: /public/POS/tutup_kasir.php?need_open_shift=1');
+    exit;
+}
 $csrf = csrf_token();
 $memberPointNominal = 1000.0;
 $memberRedeemNominal = 1.0;
-$tokoId = (int)($_SESSION['toko_id'] ?? 0);
 if ($tokoId > 0) {
     $stmtCfg = $pos_db->prepare("SELECT nilai FROM toko_config WHERE toko_id = ? AND nama_konfigurasi = 'member_point_nominal' LIMIT 1");
     $stmtCfg->bind_param('i', $tokoId);

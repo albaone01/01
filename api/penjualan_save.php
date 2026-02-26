@@ -5,6 +5,7 @@ require_once '../inc/db.php';
 require_once '../inc/auth.php';
 require_once '../inc/csrf.php';
 require_once '../inc/inventory.php';
+require_once '../inc/pos_saas_schema.php';
 
 header('Content-Type: application/json');
 
@@ -21,6 +22,14 @@ $gudangId = (int)($_SESSION['gudang_id'] ?? 0);
 if (!$tokoId || !$userId) {
     http_response_code(400);
     exit(json_encode(['ok' => false, 'msg' => 'Sesi tidak lengkap']));
+}
+ensure_pos_saas_schema($pos_db);
+if (!has_open_shift_today($pos_db, $tokoId, $userId)) {
+    http_response_code(400);
+    exit(json_encode([
+        'ok' => false,
+        'msg' => 'Shift kasir belum dibuka. Buka shift terlebih dahulu di menu Tutup Kasir.'
+    ]));
 }
 ensure_inventory_snapshot_columns($pos_db);
 try {

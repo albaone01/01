@@ -541,7 +541,7 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
                     </a>
                     <a href="tutup_kasir.php" class="menu-item">
                         <i class="fas fa-door-closed"></i>
-                        <span>Tutup Kasir</span>
+                        <span>Shift Kasir</span>
                     </a>
                     <a href="proses_data.php" class="menu-item">
                         <i class="fas fa-database"></i>
