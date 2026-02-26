@@ -254,7 +254,9 @@ if ($redeemNominal <= 0) $redeemNominal = 1.0;
 $poinDidapat = 0;
 $poinDitukar = 0;
 $potonganPoin = 0.0;
-$payAmountFinal = $payAmount;
+$payAmountFinal = 0.0; // jumlah efektif yang diakui sebagai pembayaran (net)
+$payReceived = 0.0;    // uang yang diterima dari pelanggan
+$payChange = 0.0;      // kembalian
 $totalAkhirFinal = $totalAkhir;
 $diskonFinal = $diskon;
 $sisa = 0.0;
@@ -282,11 +284,28 @@ try {
 
     $diskonFinal = $diskon + $potonganPoin;
     $totalAkhirFinal = max(0, $totalAkhir - $potonganPoin);
-    if (in_array($payMethod, ['qris', 'transfer'], true) && $payAmount <= 0) {
+    if (in_array($payMethod, ['qris', 'transfer'], true)) {
+        // transfer/qris selalu dicatat lunas sesuai total akhir
+        $payReceived = $totalAkhirFinal;
         $payAmountFinal = $totalAkhirFinal;
-    } elseif (in_array($payMethod, ['qris', 'transfer'], true)) {
-        $payAmountFinal = $totalAkhirFinal;
+        $payChange = 0.0;
+    } elseif ($payMethod === 'cash') {
+        // cash bisa lebih bayar; yang diakui ke kas = minimum(received, total)
+        $payReceived = $payAmount > 0 ? $payAmount : $totalAkhirFinal;
+        $payAmountFinal = min($payReceived, $totalAkhirFinal);
+        $payChange = max(0, $payReceived - $totalAkhirFinal);
+    } elseif ($payMethod === 'hutang') {
+        // hutang bisa DP (partial) atau 0
+        $payReceived = max(0, $payAmount);
+        $payAmountFinal = min($payReceived, $totalAkhirFinal);
+        $payChange = 0.0;
+    } else {
+        $payMethod = 'cash';
+        $payReceived = $payAmount > 0 ? $payAmount : $totalAkhirFinal;
+        $payAmountFinal = min($payReceived, $totalAkhirFinal);
+        $payChange = max(0, $payReceived - $totalAkhirFinal);
     }
+
     $sisa = max(0, $totalAkhirFinal - $payAmountFinal);
 
     if ($sisa > 0 && !$pelangganId) {
@@ -330,8 +349,15 @@ try {
         if (!in_array($payMethod, $metodeAllowed, true)) {
             $payMethod = 'cash';
         }
-        $pb = $pos_db->prepare("INSERT INTO pembayaran (penjualan_id, metode, jumlah) VALUES (?,?,?)");
-        $pb->bind_param('isd', $penjualanId, $payMethod, $payAmountFinal);
+        $hasUangDiterima = has_table_column($pos_db, 'pembayaran', 'uang_diterima');
+        $hasKembalian = has_table_column($pos_db, 'pembayaran', 'kembalian');
+        if ($hasUangDiterima && $hasKembalian) {
+            $pb = $pos_db->prepare("INSERT INTO pembayaran (penjualan_id, metode, jumlah, uang_diterima, kembalian) VALUES (?,?,?,?,?)");
+            $pb->bind_param('isddd', $penjualanId, $payMethod, $payAmountFinal, $payReceived, $payChange);
+        } else {
+            $pb = $pos_db->prepare("INSERT INTO pembayaran (penjualan_id, metode, jumlah) VALUES (?,?,?)");
+            $pb->bind_param('isd', $penjualanId, $payMethod, $payAmountFinal);
+        }
         $pb->execute();
         $pb->close();
     }
@@ -407,7 +433,9 @@ try {
         'penjualan_id' => $penjualanId,
         'nomor' => $nomor,
         'total' => $totalAkhirFinal,
-        'kembalian' => max(0, $payAmountFinal - $totalAkhirFinal),
+        'kembalian' => $payChange,
+        'dibayar' => $payAmountFinal,
+        'uang_diterima' => $payReceived,
         'sisa' => $sisa,
         'poin_didapat' => $poinDidapat,
         'poin_ditukar' => $poinDitukar,

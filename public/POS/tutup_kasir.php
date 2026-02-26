@@ -215,6 +215,12 @@ $stHist->bind_param('ii', $tokoId, $userId);
 $stHist->execute();
 $history = $stHist->get_result()->fetch_all(MYSQLI_ASSOC);
 $stHist->close();
+
+$modalAwalView = (float)($shift['modal_awal'] ?? 0);
+$kasNetTransaksiView = (float)$summary['cash'];
+$cashOutView = 0.0; // placeholder untuk pengembangan cash out operasional
+$kasSistemRumusView = $modalAwalView + $kasNetTransaksiView - $cashOutView;
+$defaultKasFisikInput = number_format($kasSistemRumusView, 2, '.', '');
 ?>
 <!doctype html>
 <html lang="id">
@@ -265,6 +271,17 @@ $stHist->close();
             <div class="stat"><small>Piutang</small><strong><?= rupiah($summary['piutang']) ?></strong></div>
         </div>
 
+        <div class="card" style="margin-bottom: 12px;">
+            <h3 style="margin:0 0 8px;">Rumus Kas Sistem</h3>
+            <p class="muted" style="margin-bottom:6px;">Kas Sistem = Modal Awal + Kas Net Transaksi - Cash Out</p>
+            <p style="font-size:14px;line-height:1.8;margin:0;">
+                Modal Awal: <strong><?= rupiah($modalAwalView) ?></strong><br>
+                Kas Net Transaksi: <strong><?= rupiah($kasNetTransaksiView) ?></strong><br>
+                Cash Out: <strong><?= rupiah($cashOutView) ?></strong><br>
+                Kas Sistem (Rumus): <strong><?= rupiah($kasSistemRumusView) ?></strong>
+            </p>
+        </div>
+
         <div class="card">
             <p class="muted">Kasir: <?= htmlspecialchars($userNama) ?> | Shift status:
                 <strong><?= htmlspecialchars((string)($shift['status'] ?? 'belum dibuka')) ?></strong>
@@ -290,8 +307,11 @@ $stHist->close();
                 <form method="post">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf) ?>">
                     <input type="hidden" name="action" value="close_shift">
+                    <label>Kas Sistem Saat Ini (Rp)</label>
+                    <input type="text" value="<?= htmlspecialchars(rupiah($kasSistemRumusView)) ?>" readonly>
                     <label>Kas Fisik Saat Tutup (Rp)</label>
-                    <input type="number" name="kas_fisik" min="0" step="0.01" value="<?= htmlspecialchars((string)((float)$summary['cash'] + (float)$shift['modal_awal'])) ?>" required>
+                    <input type="number" name="kas_fisik" min="0" step="0.01" value="<?= htmlspecialchars($defaultKasFisikInput) ?>" required>
+                    <p class="muted" style="margin-top:-4px;margin-bottom:8px;">Status tetap <strong>open</strong> sampai tombol <strong>Tutup Shift</strong> diklik.</p>
                     <label>Catatan Tutup Shift</label>
                     <textarea name="catatan" placeholder="Catatan tutup shift (opsional)"></textarea>
                     <button type="submit" class="btn-submit">Tutup Shift</button>

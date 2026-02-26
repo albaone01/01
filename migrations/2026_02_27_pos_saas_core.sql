@@ -88,3 +88,13 @@ INSERT IGNORE INTO akun_coa (toko_id, kode_akun, nama_akun, tipe, system_flag) S
 INSERT IGNORE INTO akun_coa (toko_id, kode_akun, nama_akun, tipe, system_flag) SELECT toko_id, '4101', 'Penjualan', 'revenue', 1 FROM toko WHERE deleted_at IS NULL;
 INSERT IGNORE INTO akun_coa (toko_id, kode_akun, nama_akun, tipe, system_flag) SELECT toko_id, '4201', 'Pendapatan Selisih Kas', 'revenue', 1 FROM toko WHERE deleted_at IS NULL;
 INSERT IGNORE INTO akun_coa (toko_id, kode_akun, nama_akun, tipe, system_flag) SELECT toko_id, '5101', 'Beban Selisih Kas', 'expense', 1 FROM toko WHERE deleted_at IS NULL;
+
+-- Payment detail for accurate cashflow tracking
+ALTER TABLE pembayaran
+  ADD COLUMN IF NOT EXISTS uang_diterima DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER jumlah,
+  ADD COLUMN IF NOT EXISTS kembalian DECIMAL(15,2) NOT NULL DEFAULT 0.00 AFTER uang_diterima;
+
+UPDATE pembayaran
+SET uang_diterima = CASE WHEN uang_diterima <= 0 THEN jumlah ELSE uang_diterima END,
+    kembalian = CASE WHEN metode = 'cash' THEN LEAST(kembalian, uang_diterima) ELSE 0 END
+WHERE uang_diterima = 0 OR kembalian < 0;

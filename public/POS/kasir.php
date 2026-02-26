@@ -1066,8 +1066,9 @@ async function processFinal() {
         }
         if (!d) return alert('Gagal simpan transaksi: response server tidak valid');
         if (!d.ok) return alert(d.msg || 'Gagal simpan transaksi');
+        const bayarInfo = `\nUang diterima: ${formatRp(Number(d.uang_diterima || d.dibayar || 0))}\nDibayar (net): ${formatRp(Number(d.dibayar || 0))}\nKembalian: ${formatRp(Number(d.kembalian || 0))}`;
         const poinInfo = `\nPoin didapat: ${Number(d.poin_didapat || 0).toLocaleString('id-ID')}\nPoin ditukar: ${Number(d.poin_ditukar || 0).toLocaleString('id-ID')}`;
-        alert(`Transaksi berhasil\nInvoice: ${d.nomor}\nTotal: ${formatRp(d.total)}${poinInfo}`);
+        alert(`Transaksi berhasil\nInvoice: ${d.nomor}\nTotal: ${formatRp(d.total)}${bayarInfo}${poinInfo}`);
         if (selectedCustomer) {
             selectedCustomer.saldo_poin = Math.max(0, Number(selectedCustomer.saldo_poin || 0) - Number(d.poin_ditukar || 0) + Number(d.poin_didapat || 0));
             selectedCustomer.total_belanja_bulan = Math.max(0, Number(selectedCustomer.total_belanja_bulan || 0) + Number(d.total || 0));

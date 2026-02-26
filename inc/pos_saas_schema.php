@@ -28,6 +28,22 @@ function ensure_pos_saas_schema(Database $db): void {
     $ensured = true;
 }
 
+function has_table_column(Database $db, string $table, string $column): bool {
+    $st = $db->prepare("
+        SELECT 1
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+        LIMIT 1
+    ");
+    $st->bind_param('ss', $table, $column);
+    $st->execute();
+    $ok = (bool)$st->get_result()->fetch_assoc();
+    $st->close();
+    return $ok;
+}
+
 function get_coa_map(Database $db, int $tokoId): array {
     $st = $db->prepare("SELECT kode_akun, akun_id FROM akun_coa WHERE toko_id = ? AND aktif = 1");
     $st->bind_param('i', $tokoId);
