@@ -467,7 +467,6 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
             
             <a href="../logout.php" class="logout-btn">
                 <i class="fas fa-sign-out-alt"></i>
-                Keluar
             </a>
         </div>
     </header>
@@ -536,19 +535,19 @@ $tanggal_lengkap = date('d') . ' ' . $bulan_names[date('n') - 1] . ' ' . date('Y
                     <h2 class="category-title">UTILITY</h2>
                 </div>
                 <div class="menu-items">
-                    <a href="#" class="menu-item" onclick="alert('Fitur Rekap Kasir akan segera tersedia')">
+                    <a href="rekap_kasir.php" class="menu-item">
                         <i class="fas fa-chart-pie"></i>
                         <span>Rekap Kasir</span>
                     </a>
-                    <a href="#" class="menu-item" onclick="alert('Fitur Tutup Kasir akan segera tersedia')">
+                    <a href="tutup_kasir.php" class="menu-item">
                         <i class="fas fa-door-closed"></i>
                         <span>Tutup Kasir</span>
                     </a>
-                    <a href="#" class="menu-item" onclick="alert('Fitur Proses Data akan segera tersedia')">
+                    <a href="proses_data.php" class="menu-item">
                         <i class="fas fa-database"></i>
                         <span>Proses Data</span>
                     </a>
-                    <a href="#" class="menu-item" onclick="alert('Fitur Jurnal akan segera tersedia')">
+                    <a href="jurnal.php" class="menu-item">
                         <i class="fas fa-book"></i>
                         <span>Jurnal</span>
                     </a>
