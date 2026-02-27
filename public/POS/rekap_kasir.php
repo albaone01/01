@@ -3,9 +3,11 @@ session_start();
 require_once '../../inc/config.php';
 require_once '../../inc/db.php';
 require_once '../../inc/auth.php';
+require_once '../../inc/pos_saas_schema.php';
 
 requireLogin();
 requireDevice();
+ensure_pos_saas_schema($pos_db);
 
 $tokoId = (int)($_SESSION['toko_id'] ?? 0);
 $userNama = (string)($_SESSION['pengguna_nama'] ?? 'User');
@@ -67,10 +69,11 @@ $sqlSummary = "
             COALESCE(SUM(CASE WHEN b.metode IN ('transfer','qris') THEN b.jumlah ELSE 0 END), 0) AS bayar_non_tunai,
             COALESCE(SUM(b.jumlah), 0) AS total_bayar
         FROM penjualan p
+        INNER JOIN kasir_shift s ON s.shift_id = p.shift_id AND s.toko_id = p.toko_id
         LEFT JOIN pembayaran b ON b.penjualan_id = p.penjualan_id
         WHERE p.toko_id = ?
-          AND DATE(p.dibuat_pada) BETWEEN ? AND ?
-          AND (? = 0 OR p.kasir_id = ?)
+          AND s.tanggal_shift BETWEEN ? AND ?
+          AND (? = 0 OR s.kasir_id = ?)
         GROUP BY p.penjualan_id, p.total_akhir
     ) x
 ";
@@ -100,17 +103,18 @@ $sqlKasir = "
     FROM (
         SELECT
             p.penjualan_id,
-            p.kasir_id,
+            s.kasir_id,
             p.total_akhir,
             COALESCE(SUM(CASE WHEN b.metode = 'cash' THEN b.jumlah ELSE 0 END), 0) AS bayar_cash,
             COALESCE(SUM(CASE WHEN b.metode IN ('transfer','qris') THEN b.jumlah ELSE 0 END), 0) AS bayar_non_tunai,
             COALESCE(SUM(b.jumlah), 0) AS total_bayar
         FROM penjualan p
+        INNER JOIN kasir_shift s ON s.shift_id = p.shift_id AND s.toko_id = p.toko_id
         LEFT JOIN pembayaran b ON b.penjualan_id = p.penjualan_id
         WHERE p.toko_id = ?
-          AND DATE(p.dibuat_pada) BETWEEN ? AND ?
-          AND (? = 0 OR p.kasir_id = ?)
-        GROUP BY p.penjualan_id, p.kasir_id, p.total_akhir
+          AND s.tanggal_shift BETWEEN ? AND ?
+          AND (? = 0 OR s.kasir_id = ?)
+        GROUP BY p.penjualan_id, s.kasir_id, p.total_akhir
     ) x
     INNER JOIN pengguna u ON u.pengguna_id = x.kasir_id
     GROUP BY u.pengguna_id, u.nama
@@ -128,18 +132,23 @@ $sqlInv = "
         p.penjualan_id,
         p.nomor_invoice,
         p.dibuat_pada,
+        p.shift_id,
+        s.tanggal_shift,
+        COALESCE(tpl.nama_shift, '-') AS nama_shift,
         p.total_akhir,
         u.nama AS nama_kasir,
         COALESCE(pl.nama_pelanggan, 'Walk-in') AS nama_pelanggan,
         COALESCE(SUM(b.jumlah), 0) AS total_bayar
     FROM penjualan p
-    INNER JOIN pengguna u ON u.pengguna_id = p.kasir_id
+    INNER JOIN kasir_shift s ON s.shift_id = p.shift_id AND s.toko_id = p.toko_id
+    INNER JOIN pengguna u ON u.pengguna_id = s.kasir_id
+    LEFT JOIN shift_template tpl ON tpl.template_id = s.shift_template_id
     LEFT JOIN pelanggan pl ON pl.pelanggan_id = p.pelanggan_id
     LEFT JOIN pembayaran b ON b.penjualan_id = p.penjualan_id
     WHERE p.toko_id = ?
-      AND DATE(p.dibuat_pada) BETWEEN ? AND ?
-      AND (? = 0 OR p.kasir_id = ?)
-    GROUP BY p.penjualan_id, p.nomor_invoice, p.dibuat_pada, p.total_akhir, u.nama, pl.nama_pelanggan
+      AND s.tanggal_shift BETWEEN ? AND ?
+      AND (? = 0 OR s.kasir_id = ?)
+    GROUP BY p.penjualan_id, p.nomor_invoice, p.dibuat_pada, p.shift_id, s.tanggal_shift, tpl.nama_shift, p.total_akhir, u.nama, pl.nama_pelanggan
     ORDER BY p.penjualan_id DESC
     LIMIT 200
 ";
@@ -261,7 +270,7 @@ $stInv->close();
         </div>
 
         <div class="card">
-            <p class="muted">Halo, <?= htmlspecialchars($userNama) ?>. Rekap transaksi kasir berdasarkan data riil dari tabel `penjualan` dan `pembayaran`.</p>
+            <p class="muted">Halo, <?= htmlspecialchars($userNama) ?>. Rekap kasir berbasis `shift_id` (dari tabel `kasir_shift`, `penjualan`, dan `pembayaran`).</p>
             <form method="get" class="filter">
                 <div>
                     <label>Dari Tanggal</label>
@@ -331,6 +340,7 @@ $stInv->close();
             <table>
                 <thead>
                     <tr>
+                        <th>Shift</th>
                         <th>Waktu</th>
                         <th>Invoice</th>
                         <th>Kasir</th>
@@ -342,13 +352,14 @@ $stInv->close();
                 </thead>
                 <tbody>
                     <?php if (!$rowsInvoice): ?>
-                        <tr><td colspan="7" class="muted">Tidak ada invoice pada filter ini.</td></tr>
+                        <tr><td colspan="8" class="muted">Tidak ada invoice pada filter ini.</td></tr>
                     <?php else: foreach ($rowsInvoice as $r):
                         $total = (float)$r['total_akhir'];
                         $bayar = (float)$r['total_bayar'];
                         $sisa = max(0, $total - $bayar);
                     ?>
                         <tr>
+                            <td>#<?= (int)$r['shift_id'] ?> - <?= htmlspecialchars((string)$r['nama_shift']) ?><br><span class="muted"><?= htmlspecialchars((string)$r['tanggal_shift']) ?></span></td>
                             <td><?= htmlspecialchars(date('d-m-Y H:i', strtotime($r['dibuat_pada']))) ?></td>
                             <td><?= htmlspecialchars($r['nomor_invoice']) ?></td>
                             <td><?= htmlspecialchars($r['nama_kasir']) ?></td>

@@ -24,11 +24,20 @@ if (!$tokoId || !$userId) {
     exit(json_encode(['ok' => false, 'msg' => 'Sesi tidak lengkap']));
 }
 ensure_pos_saas_schema($pos_db);
-if (!has_open_shift_today($pos_db, $tokoId, $userId)) {
+$openShift = get_open_shift($pos_db, $tokoId, $userId);
+if (!$openShift) {
     http_response_code(400);
     exit(json_encode([
         'ok' => false,
         'msg' => 'Shift kasir belum dibuka. Buka shift terlebih dahulu di menu Tutup Kasir.'
+    ]));
+}
+$shiftId = (int)($openShift['shift_id'] ?? 0);
+if ($shiftId <= 0) {
+    http_response_code(400);
+    exit(json_encode([
+        'ok' => false,
+        'msg' => 'Shift aktif tidak valid. Silakan tutup lalu buka ulang shift.'
     ]));
 }
 ensure_inventory_snapshot_columns($pos_db);
@@ -314,8 +323,8 @@ try {
 
     $poinDidapat = ($pelangganId > 0) ? (int)floor(max(0, $totalAkhirFinal) / $pointNominal) : 0;
 
-    $stmt = $pos_db->prepare("INSERT INTO penjualan (nomor_invoice, kasir_id, pelanggan_id, toko_id, gudang_id, subtotal, diskon, total_akhir) VALUES (?,?,?,?,?,?,?,?)");
-    $stmt->bind_param('siiiiidd', $nomor, $userId, $pelangganIdBind, $tokoId, $gudangId, $subtotal, $diskonFinal, $totalAkhirFinal);
+    $stmt = $pos_db->prepare("INSERT INTO penjualan (nomor_invoice, kasir_id, pelanggan_id, toko_id, gudang_id, shift_id, subtotal, diskon, total_akhir) VALUES (?,?,?,?,?,?,?,?,?)");
+    $stmt->bind_param('siiiiiddd', $nomor, $userId, $pelangganIdBind, $tokoId, $gudangId, $shiftId, $subtotal, $diskonFinal, $totalAkhirFinal);
     $stmt->execute();
     $penjualanId = (int)$pos_db->insert_id;
     $stmt->close();
