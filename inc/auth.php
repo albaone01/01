@@ -1,5 +1,11 @@
 <?php
 require_once 'db.php';
+require_once 'url.php';
+
+function isPosRequestPath() {
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    return strpos($uri, '/public/POS/') !== false || strpos($uri, '/ritel4/public/POS/') !== false;
+}
 
 function isLoggedIn() {
     return isset($_SESSION['pengguna_id']);
@@ -11,14 +17,22 @@ function isDeviceRegistered() {
 
 function requireLogin() {
     if (!isLoggedIn()) {
-        header('Location: /public/login.php');
+        if (isPosRequestPath()) {
+            header('Location: ' . app_url('/public/POS/login.php'));
+        } else {
+            header('Location: ' . app_url('/public/admin/login.php'));
+        }
         exit;
     }
 }
 
 function requireDevice() {
     if (!isDeviceRegistered()) {
-        header('Location: /public/device_check.php');
+        if (isPosRequestPath()) {
+            header('Location: ' . app_url('/public/POS/login.php') . '?need_device=1');
+        } else {
+            header('Location: /public/device_check.php');
+        }
         exit;
     }
 }

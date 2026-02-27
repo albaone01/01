@@ -16,7 +16,7 @@ Edit file:
 Contoh:
 ```json
 {
-  "serverUrl": "http://192.168.1.10/public/login.php"
+  "serverUrl": "http://192.168.1.10/ritel4/public/POS/login.php"
 }
 ```
 
@@ -36,4 +36,3 @@ Jalankan:
 ## Hotkey
 
 - `Ctrl + Shift + R` untuk reload halaman POS.
-

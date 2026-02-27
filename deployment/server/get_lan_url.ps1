@@ -1,5 +1,5 @@
 param(
-    [string]$Path = "/ritel4/public/login.php"
+    [string]$Path = "/ritel4/public/POS/login.php"
 )
 
 $ipv4 = Get-NetIPAddress -AddressFamily IPv4 |

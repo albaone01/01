@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php'; // pastikan db.php di-include dulu
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 function checkDevice() {
     global $pos_db; // gunakan pos_db

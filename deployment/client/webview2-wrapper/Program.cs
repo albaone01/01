@@ -51,7 +51,7 @@ internal sealed class MainForm : Form
         {
             var cfgPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
             if (!File.Exists(cfgPath))
-                return "http://127.0.0.1/ritel4/public/login.php";
+                return "http://127.0.0.1/ritel4/public/POS/login.php";
 
             var json = File.ReadAllText(cfgPath);
             var doc = JsonDocument.Parse(json);
@@ -65,6 +65,6 @@ internal sealed class MainForm : Form
         {
             // fallback default
         }
-        return "http://127.0.0.1/ritel4/public/login.php";
+        return "http://127.0.0.1/ritel4/public/POS/login.php";
     }
 }

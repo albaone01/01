@@ -7,7 +7,7 @@ Dokumen ini untuk mode:
 ## 1. Struktur yang dipakai
 
 - Server app URL: `http://<SERVER_IP>/ritel4/public/POS/`
-- Login URL: `http://<SERVER_IP>/ritel4/public/login.php`
+- Login URL POS: `http://<SERVER_IP>/ritel4/public/POS/login.php`
 - Health URL: `http://<SERVER_IP>/ritel4/public/POS/health.php`
 
 ## 2. Setup PC Server
@@ -29,12 +29,12 @@ Jika butuh force bind Apache ke semua interface + allow access LAN, jalankan (Ad
 
 1. Pastikan PC kasir dan server satu jaringan LAN.
 2. Test akses:
-   - `http://<SERVER_IP>/ritel4/public/login.php`
+   - `http://<SERVER_IP>/ritel4/public/POS/login.php`
 3. Jalankan kiosk launcher:
-   - `deployment\client\start_pos_kiosk.bat http://<SERVER_IP>/ritel4/public/login.php`
+   - `deployment\client\start_pos_kiosk.bat http://<SERVER_IP>/ritel4/public/POS/login.php`
 
 Atau gunakan PowerShell:
-- `deployment\client\start_pos_kiosk.ps1 -ServerUrl "http://<SERVER_IP>/ritel4/public/login.php"`
+- `deployment\client\start_pos_kiosk.ps1 -ServerUrl "http://<SERVER_IP>/ritel4/public/POS/login.php"`
 
 ## 4. Device Registration (wajib per device kasir)
 

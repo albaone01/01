@@ -487,7 +487,7 @@ $kasir_href = $shift_open ? 'kasir.php' : 'tutup_kasir.php?need_open_shift=1';
                 </div>
             </div>
             
-            <a href="../logout.php" class="logout-btn">
+            <a href="logout.php" class="logout-btn">
                 <i class="fas fa-sign-out-alt"></i>
             </a>
         </div>

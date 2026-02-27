@@ -3,7 +3,7 @@ setlocal
 
 if "%~1"=="" (
   echo Usage:
-  echo   start_pos_kiosk.bat http://SERVER_IP/ritel4/public/login.php
+  echo   start_pos_kiosk.bat http://SERVER_IP/ritel4/public/POS/login.php
   exit /b 1
 )
 
