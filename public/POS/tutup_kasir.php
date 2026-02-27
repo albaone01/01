@@ -182,35 +182,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if ($action === 'cash_movement') {
-        if (!$shift || ($shift['status'] ?? '') !== 'open') {
-            $err = 'Tidak ada shift open untuk mencatat kas masuk/keluar.';
-        } else {
-            $tipe = strtolower(trim((string)($_POST['tipe'] ?? '')));
-            $kategori = trim((string)($_POST['kategori'] ?? ''));
-            $jumlah = max(0, (float)($_POST['jumlah'] ?? 0));
-            $catatan = trim((string)($_POST['catatan'] ?? ''));
-
-            if (!in_array($tipe, ['in', 'out'], true)) {
-                $err = 'Tipe cash movement harus in/out.';
-            } elseif ($kategori === '') {
-                $err = 'Kategori cash movement wajib diisi.';
-            } elseif ($jumlah <= 0) {
-                $err = 'Jumlah cash movement harus lebih dari 0.';
-            } else {
-                $shiftId = (int)$shift['shift_id'];
-                $st = $pos_db->prepare("
-                    INSERT INTO cash_movement (toko_id, shift_id, kasir_id, tipe, kategori, jumlah, catatan)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ");
-                $st->bind_param('iiissds', $tokoId, $shiftId, $userId, $tipe, $kategori, $jumlah, $catatan);
-                $st->execute();
-                $st->close();
-                $msg = 'Cash movement tersimpan.';
-            }
-        }
-    }
-
     if ($action === 'reopen_last_closed') {
         if ($shift) {
             $err = 'Masih ada shift open. Tutup dulu shift aktif.';
@@ -276,24 +247,11 @@ $activeSummary = ['trx' => 0, 'omzet' => 0, 'cash' => 0, 'non_tunai' => 0, 'piut
 $cashInView = 0.0;
 $cashOutView = 0.0;
 $modalAwalView = (float)($shift['modal_awal'] ?? 0);
-$cashMovementRows = [];
 if ($shift) {
     $activeSummary = get_shift_summary($pos_db, (int)$shift['shift_id']);
     $movementTotals = get_shift_cash_movement_totals($pos_db, (int)$shift['shift_id']);
     $cashInView = (float)$movementTotals['in'];
     $cashOutView = (float)$movementTotals['out'];
-    $stMv = $pos_db->prepare("
-        SELECT tipe, kategori, jumlah, catatan, dibuat_pada
-        FROM cash_movement
-        WHERE shift_id = ?
-        ORDER BY movement_id DESC
-        LIMIT 10
-    ");
-    $sid = (int)$shift['shift_id'];
-    $stMv->bind_param('i', $sid);
-    $stMv->execute();
-    $cashMovementRows = $stMv->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stMv->close();
 }
 $kasSistemRumusView = $modalAwalView + (float)$activeSummary['cash'] + $cashInView - $cashOutView;
 $defaultKasFisikInput = number_format($kasSistemRumusView, 2, '.', '');
@@ -411,46 +369,9 @@ $stHist->close();
             <?php else: ?>
                 <div style="margin-bottom:8px;">
                     <a href="kasir.php" class="btn btn-primary">Masuk ke Kasir</a>
+                    <a href="kas.php" class="btn">Cash Movement</a>
                 </div>
-                <form method="post" style="margin-bottom:10px; border:1px solid var(--border); border-radius:10px; padding:10px;">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf) ?>">
-                    <input type="hidden" name="action" value="cash_movement">
-                    <label>Cash Movement (Kas Masuk/Keluar)</label>
-                    <div style="display:grid;grid-template-columns:130px 1fr 170px;gap:8px;">
-                        <select name="tipe" required>
-                            <option value="out">Cash Out</option>
-                            <option value="in">Cash In</option>
-                        </select>
-                        <input type="text" name="kategori" placeholder="Kategori (contoh: setor bank, beli ATK)" required>
-                        <input type="number" name="jumlah" min="0.01" step="0.01" placeholder="Jumlah" required>
-                    </div>
-                    <textarea name="catatan" placeholder="Catatan (opsional)"></textarea>
-                    <button type="submit" class="btn">Simpan Cash Movement</button>
-                </form>
-                <?php if ($cashMovementRows): ?>
-                    <table style="margin-bottom:10px;">
-                        <thead>
-                            <tr>
-                                <th>Waktu</th>
-                                <th>Tipe</th>
-                                <th>Kategori</th>
-                                <th>Catatan</th>
-                                <th style="text-align:right;">Jumlah</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($cashMovementRows as $mv): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars((string)$mv['dibuat_pada']) ?></td>
-                                    <td><?= htmlspecialchars(strtoupper((string)$mv['tipe'])) ?></td>
-                                    <td><?= htmlspecialchars((string)$mv['kategori']) ?></td>
-                                    <td><?= htmlspecialchars((string)($mv['catatan'] ?? '-')) ?></td>
-                                    <td style="text-align:right;"><?= rupiah((float)$mv['jumlah']) ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php endif; ?>
+                <p class="muted" style="margin-bottom:10px;">Input kas masuk/keluar dipindahkan ke menu <strong>Kas</strong> agar alur kas terpusat.</p>
                 <form method="post">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf) ?>">
                     <input type="hidden" name="action" value="close_shift">

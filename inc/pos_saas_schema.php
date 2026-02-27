@@ -8,6 +8,7 @@ function ensure_pos_saas_schema(Database $db): void {
 
     // Backfill schema drift on existing installs before FK/index checks.
     ensure_shift_compat_schema($db);
+    ensure_shift_legacy_backfill($db);
 
     // Fast path: schema already present, skip running migration SQL each request
     if (
@@ -50,6 +51,7 @@ function ensure_pos_saas_schema(Database $db): void {
     } while ($db->more_results() && $db->next_result());
 
     ensure_shift_compat_schema($db);
+    ensure_shift_legacy_backfill($db);
     ensure_shift_fk_indexes($db);
 
     $ensured = true;
@@ -239,6 +241,113 @@ function ensure_shift_compat_schema(Database $db): void {
     $db->query("INSERT IGNORE INTO shift_template (toko_id, nama_shift, jam_mulai, jam_selesai, urutan, aktif) SELECT toko_id, 'Pagi', '08:00:00', '13:00:00', 1, 1 FROM toko WHERE deleted_at IS NULL");
     $db->query("INSERT IGNORE INTO shift_template (toko_id, nama_shift, jam_mulai, jam_selesai, urutan, aktif) SELECT toko_id, 'Siang', '13:00:00', '17:00:00', 2, 1 FROM toko WHERE deleted_at IS NULL");
     $db->query("INSERT IGNORE INTO shift_template (toko_id, nama_shift, jam_mulai, jam_selesai, urutan, aktif) SELECT toko_id, 'Malam', '17:00:00', '21:00:00', 3, 1 FROM toko WHERE deleted_at IS NULL");
+    $db->query("INSERT IGNORE INTO shift_template (toko_id, nama_shift, jam_mulai, jam_selesai, urutan, aktif) SELECT toko_id, 'Legacy', '00:00:00', '23:59:59', 99, 1 FROM toko WHERE deleted_at IS NULL");
+}
+
+function ensure_shift_legacy_backfill(Database $db): void {
+    if (!has_table_exists($db, 'kasir_shift') || !has_table_exists($db, 'penjualan')) {
+        return;
+    }
+
+    // Legacy rows may still use jam_buka/jam_tutup only.
+    $db->query("
+        UPDATE kasir_shift
+        SET jam_buka_real = jam_buka
+        WHERE jam_buka_real IS NULL
+          AND jam_buka IS NOT NULL
+    ");
+    $db->query("
+        UPDATE kasir_shift
+        SET jam_tutup_real = jam_tutup
+        WHERE jam_tutup_real IS NULL
+          AND jam_tutup IS NOT NULL
+    ");
+    $db->query("
+        UPDATE kasir_shift
+        SET jam_buka_real = CONCAT(tanggal_shift, ' 08:00:00')
+        WHERE jam_buka_real IS NULL
+    ");
+    $db->query("
+        UPDATE kasir_shift
+        SET jam_tutup_real = jam_buka_real
+        WHERE jam_tutup_real IS NULL
+          AND status = 'closed'
+    ");
+
+    // Ensure every legacy shift has a template id for proper reporting label.
+    $db->query("
+        UPDATE kasir_shift s
+        JOIN shift_template t
+          ON t.toko_id = s.toko_id
+         AND t.nama_shift = 'Legacy'
+         AND t.aktif = 1
+        SET s.shift_template_id = t.template_id
+        WHERE s.shift_template_id IS NULL
+    ");
+
+    // Backfill penjualan.shift_id by same toko+kasir+tanggal_shift.
+    $db->query("
+        UPDATE penjualan p
+        SET p.shift_id = (
+            SELECT s.shift_id
+            FROM kasir_shift s
+            WHERE s.toko_id = p.toko_id
+              AND s.kasir_id = p.kasir_id
+              AND s.tanggal_shift = DATE(p.dibuat_pada)
+            ORDER BY s.shift_id DESC
+            LIMIT 1
+        )
+        WHERE p.shift_id IS NULL
+    ");
+
+    // Create closed legacy shift for dates that have penjualan but no kasir_shift row.
+    $db->query("
+        INSERT INTO kasir_shift
+        (toko_id, kasir_id, device_id, shift_template_id, tanggal_shift, jam_buka_real, jam_tutup_real, jam_buka, jam_tutup, modal_awal, kas_sistem, kas_fisik, selisih, status, catatan)
+        SELECT
+            p.toko_id,
+            p.kasir_id,
+            NULL AS device_id,
+            t.template_id,
+            DATE(p.dibuat_pada) AS tanggal_shift,
+            MIN(p.dibuat_pada) AS jam_buka_real,
+            MAX(p.dibuat_pada) AS jam_tutup_real,
+            MIN(p.dibuat_pada) AS jam_buka,
+            MAX(p.dibuat_pada) AS jam_tutup,
+            0 AS modal_awal,
+            0 AS kas_sistem,
+            0 AS kas_fisik,
+            0 AS selisih,
+            'closed' AS status,
+            'Backfill legacy from penjualan' AS catatan
+        FROM penjualan p
+        INNER JOIN shift_template t
+                ON t.toko_id = p.toko_id
+               AND t.nama_shift = 'Legacy'
+               AND t.aktif = 1
+        LEFT JOIN kasir_shift s
+               ON s.toko_id = p.toko_id
+              AND s.kasir_id = p.kasir_id
+              AND s.tanggal_shift = DATE(p.dibuat_pada)
+        WHERE p.shift_id IS NULL
+          AND s.shift_id IS NULL
+        GROUP BY p.toko_id, p.kasir_id, DATE(p.dibuat_pada), t.template_id
+    ");
+
+    // Re-link any remaining legacy sales after synthetic shifts are inserted.
+    $db->query("
+        UPDATE penjualan p
+        SET p.shift_id = (
+            SELECT s.shift_id
+            FROM kasir_shift s
+            WHERE s.toko_id = p.toko_id
+              AND s.kasir_id = p.kasir_id
+              AND s.tanggal_shift = DATE(p.dibuat_pada)
+            ORDER BY s.shift_id DESC
+            LIMIT 1
+        )
+        WHERE p.shift_id IS NULL
+    ");
 }
 
 function get_coa_map(Database $db, int $tokoId): array {

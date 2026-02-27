@@ -531,7 +531,7 @@ $kasir_href = $shift_open ? 'kasir.php' : 'tutup_kasir.php?need_open_shift=1';
                 <div class="menu-items">
                     <a href="kas.php" class="menu-item">
                         <i class="fas fa-cash-register"></i>
-                        <span>Kas</span>
+                        <span>Cash Movement</span>
                     </a>
                     <a href="<?= htmlspecialchars($kasir_href) ?>" class="menu-item<?= $shift_open ? '' : ' disabled' ?>" <?= $shift_open ? '' : 'title="Buka shift terlebih dahulu"' ?>>
                         <i class="fas fa-user-tie"></i>
@@ -593,11 +593,11 @@ $kasir_href = $shift_open ? 'kasir.php' : 'tutup_kasir.php?need_open_shift=1';
                         <i class="fas fa-users-cog"></i>
                         <span>User</span>
                     </a>
-                    <a href="#" class="menu-item" onclick="alert('Fitur Backup akan segera tersedia')">
+                    <a href="maintenance_backup.php" class="menu-item">
                         <i class="fas fa-database"></i>
                         <span>Backup</span>
                     </a>
-                    <a href="#" class="menu-item" onclick="alert('Fitur Repair akan segera tersedia')">
+                    <a href="maintenance_repair.php" class="menu-item">
                         <i class="fas fa-wrench"></i>
                         <span>Repair</span>
                     </a>
