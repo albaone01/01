@@ -123,6 +123,18 @@ function lb_ensure_schema(Database $db): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 
+    try {
+        if (!lb_has_column($db, 'produk', 'harga_beli_sebelum')) {
+            $db->query("ALTER TABLE produk ADD COLUMN harga_beli_sebelum DECIMAL(15,2) NOT NULL DEFAULT 0 AFTER harga_modal");
+        }
+        if (!lb_has_column($db, 'produk', 'harga_beli_akhir')) {
+            $db->query("ALTER TABLE produk ADD COLUMN harga_beli_akhir DECIMAL(15,2) NOT NULL DEFAULT 0 AFTER harga_beli_sebelum");
+        }
+        if (!lb_has_column($db, 'produk', 'harga_beli_terakhir_at')) {
+            $db->query("ALTER TABLE produk ADD COLUMN harga_beli_terakhir_at DATETIME NULL AFTER harga_beli_akhir");
+        }
+    } catch (Throwable $e) {}
+
     $ensured = true;
 }
 
@@ -232,6 +244,58 @@ function lb_fetch_products(Database $db, int $tokoId, string $q = '', int $limit
     unset($row);
 
     return $rows;
+}
+
+function lb_fetch_products_harga_naik(Database $db, int $tokoId, string $q = '', int $limit = 700): array {
+    lb_ensure_schema($db);
+
+    $where = [
+        "p.toko_id = ?",
+        "p.deleted_at IS NULL",
+        "COALESCE(p.harga_beli_akhir,0) > COALESCE(p.harga_beli_sebelum,0)",
+        "COALESCE(p.harga_beli_akhir,0) > 0"
+    ];
+    $types = 'i';
+    $params = [$tokoId];
+
+    $q = trim($q);
+    if ($q !== '') {
+        $where[] = "(p.nama_produk LIKE CONCAT('%',?,'%') OR p.sku LIKE CONCAT('%',?,'%') OR p.barcode LIKE CONCAT('%',?,'%'))";
+        $types .= 'sss';
+        array_push($params, $q, $q, $q);
+    }
+
+    $limit = max(50, min(1200, $limit));
+    $types .= 'i';
+    $params[] = $limit;
+
+    $sql = "
+        SELECT
+            p.produk_id, p.nama_produk, p.sku, p.barcode, p.satuan,
+            COALESCE(p.harga_modal,0) AS harga_modal,
+            COALESCE(p.harga_beli_sebelum,0) AS harga_beli_sebelum,
+            COALESCE(p.harga_beli_akhir,0) AS harga_beli_akhir,
+            p.harga_beli_terakhir_at,
+            COALESCE(pe.harga_jual, 0) AS harga_ecer,
+            COALESCE(pg.harga_jual, 0) AS harga_grosir,
+            COALESCE(pr.harga_jual, 0) AS harga_reseller,
+            COALESCE(pm.harga_jual, 0) AS harga_member,
+            (COALESCE(p.harga_beli_akhir,0) - COALESCE(p.harga_beli_sebelum,0)) AS kenaikan_nominal
+        FROM produk p
+        LEFT JOIN produk_harga pe ON pe.produk_id = p.produk_id AND pe.tipe = 'ecer'
+        LEFT JOIN produk_harga pg ON pg.produk_id = p.produk_id AND pg.tipe = 'grosir'
+        LEFT JOIN produk_harga pr ON pr.produk_id = p.produk_id AND pr.tipe = 'reseller'
+        LEFT JOIN produk_harga pm ON pm.produk_id = p.produk_id AND pm.tipe = 'member'
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY kenaikan_nominal DESC, p.nama_produk ASC
+        LIMIT ?
+    ";
+    $st = $db->prepare($sql);
+    $st->bind_param($types, ...$params);
+    $st->execute();
+    $rows = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+    $st->close();
+    return $rows ?: [];
 }
 
 function lb_pick_price(array $row, string $priceTier): float {

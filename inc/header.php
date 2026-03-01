@@ -271,6 +271,7 @@ if (!isset($no_header)) {
                                 </ul>
                             </li>
                             <li><a href="<?=$base?>print_label_barcode/price_card_folio.php">Price Card Kertas Folio</a></li>
+                            <li><a href="<?=$base?>print_label_barcode/price_card_harga_naik.php">Print Harga Naik</a></li>
                         </ul>
                     </li>
 

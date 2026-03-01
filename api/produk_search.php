@@ -31,7 +31,11 @@ if ($gudangId <= 0) {
 }
 
 $q = trim($_GET['q'] ?? '');
-$limit = 20;
+$limit = (int)($_GET['limit'] ?? 20);
+$offset = (int)($_GET['offset'] ?? 0);
+if ($limit <= 0) $limit = 20;
+if ($limit > 100) $limit = 100;
+if ($offset < 0) $offset = 0;
 
 $sqlSelect = "SELECT p.produk_id, p.nama_produk, p.sku, p.barcode, p.satuan,
                      p.pajak_persen, p.harga_modal, COALESCE(p.min_stok,0) AS min_stok, COALESCE(p.max_stok,0) AS max_stok,
@@ -51,8 +55,8 @@ $sqlSelect = "SELECT p.produk_id, p.nama_produk, p.sku, p.barcode, p.satuan,
 
 $data = [];
 if ($q === '') {
-    $stmt = $pos_db->prepare($sqlSelect . " ORDER BY p.nama_produk LIMIT ?");
-    $stmt->bind_param('iii', $gudangId, $tokoId, $limit);
+    $stmt = $pos_db->prepare($sqlSelect . " ORDER BY p.nama_produk LIMIT ? OFFSET ?");
+    $stmt->bind_param('iiii', $gudangId, $tokoId, $limit, $offset);
     $stmt->execute();
     $res = $stmt->get_result();
     $data = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
@@ -68,8 +72,8 @@ if ($q === '') {
 
     if (empty($data)) {
         $like = "%{$q}%";
-        $stmt = $pos_db->prepare($sqlSelect . " AND (p.sku LIKE ? OR p.nama_produk LIKE ?) ORDER BY p.nama_produk LIMIT ?");
-        $stmt->bind_param('iissi', $gudangId, $tokoId, $like, $like, $limit);
+        $stmt = $pos_db->prepare($sqlSelect . " AND (p.sku LIKE ? OR p.nama_produk LIKE ?) ORDER BY p.nama_produk LIMIT ? OFFSET ?");
+        $stmt->bind_param('iissii', $gudangId, $tokoId, $like, $like, $limit, $offset);
         $stmt->execute();
         $res = $stmt->get_result();
         $data = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
@@ -116,4 +120,13 @@ if (!empty($data)) {
     }
 }
 
-echo json_encode(['ok' => true, 'data' => $data]);
+echo json_encode([
+    'ok' => true,
+    'data' => $data,
+    'meta' => [
+        'limit' => $limit,
+        'offset' => $offset,
+        'count' => count($data),
+        'has_more' => count($data) >= $limit
+    ]
+]);
