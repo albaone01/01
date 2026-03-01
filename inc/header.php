@@ -1,8 +1,8 @@
 <?php
 if (!isset($no_header)) {
-    // Gunakan base absolut ke /public/admin agar konsisten di host apa pun.
-    $is_admin = isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/admin/') !== false;
-    $base = $is_admin ? '/public/admin/' : '/admin/';
+    require_once __DIR__ . '/url.php';
+    // Selalu pakai URL absolut dari root aplikasi agar aman saat dibuka dari subfolder mana pun.
+    $base = app_url('/public/admin/');
 ?>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
@@ -156,7 +156,7 @@ if (!isset($no_header)) {
                 <ul class="dropdown">
 
                     <!-- Master -->
-                    <li><a href="dashboard.php">Dashboard</a></li>
+                    <li><a href="<?=$base?>dashboard.php">Dashboard</a></li>
                     <li><a href="<?=$base?>produk/master_barang.php">Master Barang</a></li>
                     <li><a href="<?=$base?>kategori/">Kategori Produk</a></li>
                     <li><a href="<?=$base?>supplier/index.php">Supplier</a></li>

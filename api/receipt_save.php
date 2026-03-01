@@ -16,6 +16,7 @@ $catatan  = trim($_POST['catatan'] ?? '');
 $gudangId = (int)($_POST['gudang_id'] ?? ($_SESSION['gudang_id'] ?? 1));
 
 if(!$poId || !$supplierId) exit(json_encode(['ok'=>false,'msg'=>'PO dan supplier wajib diisi']));
+if(!$tokoId) exit(json_encode(['ok'=>false,'msg'=>'Sesi toko tidak valid']));
 
 // pastikan tabel pembelian & detail ada
 $pos_db->query("CREATE TABLE IF NOT EXISTS pembelian (
@@ -37,6 +38,18 @@ $pos_db->query("CREATE TABLE IF NOT EXISTS pembelian (
     status VARCHAR(30) NOT NULL DEFAULT 'draft',
     dibuat_pada TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+try{
+    $cols = [
+        'tempo_hari' => "ALTER TABLE pembelian ADD COLUMN tempo_hari INT DEFAULT NULL AFTER salesman",
+        'po_id' => "ALTER TABLE pembelian ADD COLUMN po_id BIGINT DEFAULT NULL AFTER nomor_faktur",
+    ];
+    foreach($cols as $col=>$ddl){
+        $c = $pos_db->query("SHOW COLUMNS FROM pembelian LIKE '$col'");
+        if(!$c || $c->num_rows===0){
+            $pos_db->query($ddl);
+        }
+    }
+}catch(Exception $e){}
 
 $pos_db->query("CREATE TABLE IF NOT EXISTS pembelian_detail (
     detail_id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -62,6 +75,8 @@ $tipeFaktur = 'cash'; // penerimaan default cash; akan diisi dari PO jika ada
 $dueDate = null;
 $tempoHari = 0;
 $supplierNama = null;
+$diskonPo = 0.0;
+$ongkirPo = 0.0;
 // ambil nama supplier
 $sName = $pos_db->prepare("SELECT nama_supplier FROM supplier WHERE supplier_id=? LIMIT 1");
 $sName->bind_param("i", $supplierId);
@@ -75,32 +90,57 @@ try{
     ensure_inventory_snapshot_columns($pos_db);
     // Ambil info PO tempo jika ada
     if($poId){
-        $poStmt = $pos_db->prepare("SELECT nomor, tipe_faktur, jatuh_tempo, tempo_hari FROM purchase_order WHERE po_id=? LIMIT 1");
-        $poStmt->bind_param("i", $poId);
+        $poStmt = $pos_db->prepare("SELECT nomor, tipe_faktur, jatuh_tempo, tempo_hari, supplier_id, diskon, ongkir FROM purchase_order WHERE po_id=? AND toko_id=? AND status='approved' LIMIT 1");
+        $poStmt->bind_param("ii", $poId, $tokoId);
         $poStmt->execute();
         $poInfo = $poStmt->get_result()->fetch_assoc();
         $poStmt->close();
-        if($poInfo){
-            $nomorFaktur = $poInfo['nomor'] ?? $nomorFaktur;
-            $tipeFaktur = $poInfo['tipe_faktur'] ?? 'cash';
-            $dueDate = $poInfo['jatuh_tempo'] ?? null;
-            $tempoHari = (int)($poInfo['tempo_hari'] ?? 0);
+        if(!$poInfo){
+            throw new Exception('PO tidak ditemukan atau belum approved');
         }
+        if((int)($poInfo['supplier_id'] ?? 0) !== $supplierId){
+            throw new Exception('Supplier tidak sesuai dengan PO');
+        }
+        $nomorFaktur = $poInfo['nomor'] ?? $nomorFaktur;
+        $tipeFaktur = $poInfo['tipe_faktur'] ?? 'cash';
+        $dueDate = $poInfo['jatuh_tempo'] ?? null;
+        $tempoHari = (int)($poInfo['tempo_hari'] ?? 0);
+        $diskonPo = (float)($poInfo['diskon'] ?? 0);
+        $ongkirPo = (float)($poInfo['ongkir'] ?? 0);
     }
 
     $stmt = $pos_db->prepare("INSERT INTO pembelian (supplier_id,toko_id,gudang_id,nomor_faktur,tanggal,jatuh_tempo,tempo_hari,subtotal,pajak,diskon,ongkir,total,catatan,tipe_faktur,status,po_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-    $zeroD=0.0; $statusVal='posted';
+    $statusVal='posted';
     $types = "iiisssidddddsssi";
-    $stmt->bind_param($types, $supplierId,$tokoId,$gudangId,$nomorFaktur,$tanggal,$dueDate,$tempoHari,$subtotal,$pajak,$zeroD,$zeroD,$total,$catatan,$tipeFaktur,$statusVal,$poId);
+    $stmt->bind_param($types, $supplierId,$tokoId,$gudangId,$nomorFaktur,$tanggal,$dueDate,$tempoHari,$subtotal,$pajak,$diskonPo,$ongkirPo,$total,$catatan,$tipeFaktur,$statusVal,$poId);
     $stmt->execute();
     $pembelianId = $pos_db->insertId();
     $stmt->close();
 
+$poItemMap = [];
+$poDet = $pos_db->prepare("SELECT produk_id, nama_barang, qty FROM purchase_order_detail WHERE po_id=? AND qty>0");
+$poDet->bind_param("i", $poId);
+$poDet->execute();
+$poRes = $poDet->get_result();
+while($r = $poRes->fetch_assoc()){
+    $pid = (int)($r['produk_id'] ?? 0);
+    $nmKey = strtolower(trim((string)($r['nama_barang'] ?? '')));
+    if($pid > 0){
+        $poItemMap['p:'.$pid] = (float)$r['qty'];
+    } elseif($nmKey !== '') {
+        $poItemMap['n:'.$nmKey] = (float)$r['qty'];
+    }
+}
+$poDet->close();
+
+$receivedAccumulator = [];
+$validRows = 0;
 $stmtD = $pos_db->prepare("INSERT INTO pembelian_detail (pembelian_id,produk_id,nama_barang,qty,harga_beli,subtotal) VALUES (?,?,?,?,?,?)");
 foreach($barang as $i=>$nm){
     $nm = trim($nm);
     if($nm==='') continue;
     $q = (float)($qtys[$i] ?? 0);
+    if($q <= 0) continue;
     $qInt = (int)round($q);
     if ($q > 0 && abs($q - $qInt) > 0.0001) {
         throw new Exception('Qty penerimaan harus bilangan bulat');
@@ -108,8 +148,20 @@ foreach($barang as $i=>$nm){
     $h = (float)($harga[$i] ?? 0);
     $sub = $q*$h;
     $prodId = (int)($prodIds[$i] ?? 0);
+
+    $nmKey = strtolower($nm);
+    $mapKey = $prodId > 0 ? ('p:'.$prodId) : ('n:'.$nmKey);
+    if(!isset($poItemMap[$mapKey])){
+        throw new Exception("Barang {$nm} tidak ada di PO");
+    }
+    $receivedAccumulator[$mapKey] = (float)($receivedAccumulator[$mapKey] ?? 0) + $q;
+    if($receivedAccumulator[$mapKey] - (float)$poItemMap[$mapKey] > 0.0001){
+        throw new Exception("Qty terima {$nm} melebihi qty PO");
+    }
+
     $stmtD->bind_param("iisddd", $pembelianId, $prodId, $nm, $q, $h, $sub);
     $stmtD->execute();
+    $validRows++;
 
     if ($prodId > 0 && $qInt > 0) {
         $ref = $nomorFaktur;
@@ -118,6 +170,9 @@ foreach($barang as $i=>$nm){
     }
 }
     $stmtD->close();
+    if($validRows <= 0){
+        throw new Exception('Tidak ada qty terima yang valid');
+    }
 
     // jika tempo, buat entri hutang supplier
     if($tipeFaktur === 'tempo'){
@@ -130,13 +185,13 @@ foreach($barang as $i=>$nm){
     }
 
     // tandai PO received
-    $upd = $pos_db->prepare("UPDATE purchase_order SET status='received' WHERE po_id=?");
-    $upd->bind_param("i", $poId);
+    $upd = $pos_db->prepare("UPDATE purchase_order SET status='received' WHERE po_id=? AND toko_id=?");
+    $upd->bind_param("ii", $poId, $tokoId);
     $upd->execute();
     $upd->close();
 
     $pos_db->commit();
-    echo json_encode(['ok'=>true,'msg'=>'Penerimaan tersimpan','redirect'=>"/public/purchase_order/print.php?id=$poId"]);
+    echo json_encode(['ok'=>true,'msg'=>'Penerimaan tersimpan','redirect'=>"/public/admin/purchase_order/print.php?id=$poId"]);
 }catch(Exception $e){
     $pos_db->rollback();
     echo json_encode(['ok'=>false,'msg'=>$e->getMessage()]);

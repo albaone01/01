@@ -7,8 +7,9 @@ header('Content-Type: application/json');
 function ensure_po_schema($db){
     $db->query("CREATE TABLE IF NOT EXISTS purchase_order (
         po_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        toko_id BIGINT NOT NULL DEFAULT 0,
         supplier_id BIGINT NULL,
-        nomor VARCHAR(60) NOT NULL UNIQUE,
+        nomor VARCHAR(60) NOT NULL,
         tanggal DATE NULL,
         jatuh_tempo DATE NULL,
         subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -22,9 +23,11 @@ function ensure_po_schema($db){
         tempo_hari INT DEFAULT NULL,
         jenis_ppn VARCHAR(20) DEFAULT NULL,
         status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        UNIQUE KEY uq_po_toko_nomor (toko_id, nomor),
         dibuat_pada TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $need = [
+        'toko_id' => "ALTER TABLE purchase_order ADD COLUMN toko_id BIGINT NOT NULL DEFAULT 0 AFTER po_id",
         'supplier_id' => "ALTER TABLE purchase_order ADD COLUMN supplier_id BIGINT NULL",
         'tanggal' => "ALTER TABLE purchase_order ADD COLUMN tanggal DATE NULL",
         'jatuh_tempo' => "ALTER TABLE purchase_order ADD COLUMN jatuh_tempo DATE NULL",
@@ -46,6 +49,47 @@ function ensure_po_schema($db){
             }
         }catch(Exception $e){}
     }
+
+    // Migrasi unique lama: nomor global -> unik per toko
+    try{
+        $idxRes = $db->query("SHOW INDEX FROM purchase_order");
+        $idxMap = [];
+        if($idxRes){
+            while($ix = $idxRes->fetch_assoc()){
+                $k = (string)$ix['Key_name'];
+                if(!isset($idxMap[$k])){
+                    $idxMap[$k] = [
+                        'non_unique' => (int)$ix['Non_unique'],
+                        'cols' => []
+                    ];
+                }
+                $idxMap[$k]['cols'][(int)$ix['Seq_in_index']] = (string)$ix['Column_name'];
+            }
+        }
+
+        $hasComposite = false;
+        foreach($idxMap as $k => $meta){
+            ksort($meta['cols']);
+            $cols = array_values($meta['cols']);
+            if($meta['non_unique'] === 0 && count($cols) === 2 && $cols[0] === 'toko_id' && $cols[1] === 'nomor'){
+                $hasComposite = true;
+            }
+        }
+
+        foreach($idxMap as $k => $meta){
+            if($k === 'PRIMARY') continue;
+            if($meta['non_unique'] !== 0) continue;
+            ksort($meta['cols']);
+            $cols = array_values($meta['cols']);
+            if(count($cols) === 1 && $cols[0] === 'nomor'){
+                $db->query("ALTER TABLE purchase_order DROP INDEX `{$k}`");
+            }
+        }
+
+        if(!$hasComposite){
+            $db->query("ALTER TABLE purchase_order ADD UNIQUE KEY uq_po_toko_nomor (toko_id, nomor)");
+        }
+    }catch(Exception $e){}
 }
 ensure_po_schema($pos_db);
 
@@ -78,6 +122,7 @@ try{
     }
 }catch(Exception $e){}
 
+$tokoId   = (int)($_SESSION['toko_id'] ?? 0);
 $supplierId = (int)($_POST['supplier_id'] ?? 0);
 $nomor    = trim($_POST['nomor'] ?? '');
 $tanggal  = $_POST['tanggal'] ?? date('Y-m-d');
@@ -93,17 +138,33 @@ $jenisPpn  = trim($_POST['jenis_ppn'] ?? '');
 $tipe     = $_POST['tipe_faktur'] === 'tempo' ? 'tempo' : 'cash';
 $sales    = trim($_POST['salesman'] ?? '');
 $status   = trim($_POST['status'] ?? 'draft');
+if (!in_array($status, ['draft', 'approved'], true)) $status = 'draft';
 
+if(!$tokoId) exit(json_encode(['ok'=>false,'msg'=>'Sesi toko tidak valid']));
 if(!$supplierId || $nomor=='') exit(json_encode(['ok'=>false,'msg'=>'Supplier dan nomor PO wajib diisi']));
+
+$supCheck = $pos_db->prepare("SELECT supplier_id FROM supplier WHERE supplier_id=? AND toko_id=? LIMIT 1");
+$supCheck->bind_param("ii", $supplierId, $tokoId);
+$supCheck->execute();
+$supRow = $supCheck->get_result()->fetch_assoc();
+$supCheck->close();
+if (!$supRow) exit(json_encode(['ok'=>false,'msg'=>'Supplier tidak valid untuk toko ini']));
+
+$dupCheck = $pos_db->prepare("SELECT po_id FROM purchase_order WHERE toko_id=? AND nomor=? LIMIT 1");
+$dupCheck->bind_param("is", $tokoId, $nomor);
+$dupCheck->execute();
+$dupPo = $dupCheck->get_result()->fetch_assoc();
+$dupCheck->close();
+if($dupPo) exit(json_encode(['ok'=>false,'msg'=>'Nomor PO sudah dipakai di toko ini']));
 
 if($tipe === 'tempo' && !$jt && $tempoHari>0){
     $jt = date('Y-m-d', strtotime($tanggal . " +{$tempoHari} days"));
 }
 $pos_db->begin_transaction();
 try{
-    $stmt = $pos_db->prepare("INSERT INTO purchase_order (supplier_id, nomor, tanggal, jatuh_tempo, tempo_hari, jenis_ppn, subtotal, pajak, diskon, ongkir, total, catatan, tipe_faktur, salesman, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-    $types = "isssisdddddssss";
-    $stmt->bind_param($types, $supplierId, $nomor, $tanggal, $jt, $tempoHari, $jenisPpn, $subtotal, $pajak, $diskon, $ongkir, $total, $catatan, $tipe, $sales, $status);
+    $stmt = $pos_db->prepare("INSERT INTO purchase_order (toko_id, supplier_id, nomor, tanggal, jatuh_tempo, tempo_hari, jenis_ppn, subtotal, pajak, diskon, ongkir, total, catatan, tipe_faktur, salesman, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    $types = "iisssisdddddssss";
+    $stmt->bind_param($types, $tokoId, $supplierId, $nomor, $tanggal, $jt, $tempoHari, $jenisPpn, $subtotal, $pajak, $diskon, $ongkir, $total, $catatan, $tipe, $sales, $status);
     $stmt->execute();
     $poId = $pos_db->insertId();
     $stmt->close();

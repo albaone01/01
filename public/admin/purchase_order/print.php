@@ -37,8 +37,9 @@ function cfg($key, $default=''){
 function ensure_po_schema($db){
     $db->query("CREATE TABLE IF NOT EXISTS purchase_order (
         po_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        toko_id BIGINT NOT NULL DEFAULT 0,
         supplier_id BIGINT NULL,
-        nomor VARCHAR(60) NOT NULL UNIQUE,
+        nomor VARCHAR(60) NOT NULL,
         tanggal DATE NULL,
         jatuh_tempo DATE NULL,
         subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -52,9 +53,11 @@ function ensure_po_schema($db){
         status VARCHAR(30) NOT NULL DEFAULT 'draft',
         tempo_hari INT DEFAULT NULL,
         jenis_ppn VARCHAR(20) DEFAULT NULL,
+        UNIQUE KEY uq_po_toko_nomor (toko_id, nomor),
         dibuat_pada TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $need = [
+        'toko_id' => "ALTER TABLE purchase_order ADD COLUMN toko_id BIGINT NOT NULL DEFAULT 0 AFTER po_id",
         'supplier_id' => "ALTER TABLE purchase_order ADD COLUMN supplier_id BIGINT NULL",
         'tanggal' => "ALTER TABLE purchase_order ADD COLUMN tanggal DATE NULL",
         'jatuh_tempo' => "ALTER TABLE purchase_order ADD COLUMN jatuh_tempo DATE NULL",
@@ -76,17 +79,59 @@ function ensure_po_schema($db){
             }
         }catch(Exception $e){}
     }
+
+    // Migrasi unique lama: nomor global -> unik per toko
+    try{
+        $idxRes = $db->query("SHOW INDEX FROM purchase_order");
+        $idxMap = [];
+        if($idxRes){
+            while($ix = $idxRes->fetch_assoc()){
+                $k = (string)$ix['Key_name'];
+                if(!isset($idxMap[$k])){
+                    $idxMap[$k] = [
+                        'non_unique' => (int)$ix['Non_unique'],
+                        'cols' => []
+                    ];
+                }
+                $idxMap[$k]['cols'][(int)$ix['Seq_in_index']] = (string)$ix['Column_name'];
+            }
+        }
+
+        $hasComposite = false;
+        foreach($idxMap as $k => $meta){
+            ksort($meta['cols']);
+            $cols = array_values($meta['cols']);
+            if($meta['non_unique'] === 0 && count($cols) === 2 && $cols[0] === 'toko_id' && $cols[1] === 'nomor'){
+                $hasComposite = true;
+            }
+        }
+
+        foreach($idxMap as $k => $meta){
+            if($k === 'PRIMARY') continue;
+            if($meta['non_unique'] !== 0) continue;
+            ksort($meta['cols']);
+            $cols = array_values($meta['cols']);
+            if(count($cols) === 1 && $cols[0] === 'nomor'){
+                $db->query("ALTER TABLE purchase_order DROP INDEX `{$k}`");
+            }
+        }
+
+        if(!$hasComposite){
+            $db->query("ALTER TABLE purchase_order ADD UNIQUE KEY uq_po_toko_nomor (toko_id, nomor)");
+        }
+    }catch(Exception $e){}
 }
 ensure_po_schema($db);
 
 $id = (int)($_GET['id'] ?? 0);
 if(!$id) die('ID PO tidak ditemukan');
+if(!$tokoId) die('Sesi toko tidak valid');
 
 $stmt = $db->prepare("SELECT po.*, s.nama_supplier, s.telepon, s.alamat
                       FROM purchase_order po
                       LEFT JOIN supplier s ON s.supplier_id = po.supplier_id
-                      WHERE po.po_id=? LIMIT 1");
-$stmt->bind_param("i", $id);
+                      WHERE po.po_id=? AND po.toko_id=? LIMIT 1");
+$stmt->bind_param("ii", $id, $tokoId);
 $stmt->execute();
 $res = $stmt->get_result();
 $po = $res ? $res->fetch_assoc() : null;

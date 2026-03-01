@@ -15,8 +15,9 @@ $poList = [];
 $stmt = $pos_db->prepare("SELECT po_id, nomor, tanggal, status, s.nama_supplier 
                           FROM purchase_order po
                           LEFT JOIN supplier s ON s.supplier_id = po.supplier_id
-                          WHERE po.status IN ('approved','draft')
+                          WHERE po.toko_id=? AND po.status='approved'
                           ORDER BY po.tanggal DESC");
+$stmt->bind_param("i", $tokoId);
 $stmt->execute();
 $res = $stmt->get_result();
 if($res) $poList = $res->fetch_all(MYSQLI_ASSOC);
@@ -225,6 +226,10 @@ async function selectPO(id, nomor, supplier, tgl, status){
 
     const res = await fetch(`/api/load_po_items.php?po_id=${id}`);
     const data = await res.json();
+    if(data && data.ok === false){
+        alert(data.msg || 'PO tidak bisa diproses');
+        return;
+    }
     const body = document.getElementById('itemBody');
     body.innerHTML='';
     document.getElementById('supplier_id').value = data.supplier_id || '';

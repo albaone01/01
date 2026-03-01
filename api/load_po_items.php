@@ -5,17 +5,19 @@ require_once '../inc/db.php';
 header('Content-Type: application/json');
 
 $poId = (int)($_GET['po_id'] ?? 0);
-if(!$poId) exit(json_encode([]));
+$tokoId = (int)($_SESSION['toko_id'] ?? 0);
+if(!$poId || !$tokoId) exit(json_encode(['ok'=>false,'msg'=>'Parameter tidak valid']));
 
 $stmt = $pos_db->prepare("SELECT po.supplier_id, po.nomor, po.tanggal, po.status, po.jenis_ppn, po.pajak, po.subtotal as po_subtotal, s.nama_supplier
                           FROM purchase_order po
                           LEFT JOIN supplier s ON s.supplier_id = po.supplier_id
-                          WHERE po.po_id=? LIMIT 1");
-$stmt->bind_param("i", $poId);
+                          WHERE po.po_id=? AND po.toko_id=? AND po.status='approved' LIMIT 1");
+$stmt->bind_param("ii", $poId, $tokoId);
 $stmt->execute();
 $headerRes = $stmt->get_result();
 $header = $headerRes ? $headerRes->fetch_assoc() : null;
 $stmt->close();
+if(!$header) exit(json_encode(['ok'=>false,'msg'=>'PO tidak ditemukan atau belum approved']));
 
 $items = [];
 // Pastikan kolom satuan ada (untuk tabel lama)
@@ -38,6 +40,7 @@ if($res) $items = $res->fetch_all(MYSQLI_ASSOC);
 $det->close();
 
 echo json_encode([
+    'ok' => true,
     'supplier_id' => $header['supplier_id'] ?? null,
     'nama_supplier' => $header['nama_supplier'] ?? null,
     'jenis_ppn' => $header['jenis_ppn'] ?? '',
