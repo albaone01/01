@@ -169,12 +169,28 @@ if ($tokoId > 0) {
         .customer-info.active {
             display: block;
         }
+
+        .logo-btn {
+            background: none;
+            border: none;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #0f172a;
+        }
+
+        .logo-btn span {
+            color: #2563eb;
+        }
     </style>
 </head>
 <body>
 
 <header>
-    <div class="logo">POS<span>AlbaOne</span></div>
+    <button class="logo-btn" onclick="goHome()">
+        POS<span>AlbaOne</span>
+    </button>
+
     <div id="realtime" style="font-weight: 600; font-size: 14px; color: #64748b;"></div>
 </header>
 
@@ -1331,6 +1347,11 @@ if (custSearchInput) {
 
 loadActiveState();
 render();
+
+// tombol kembali pakai logo
+function goHome() {
+    location.replace('index.php');
+}
 </script>
 </body>
 </html>

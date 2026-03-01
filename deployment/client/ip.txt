@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\ritel4\deployment\server\get_lan_url.ps1

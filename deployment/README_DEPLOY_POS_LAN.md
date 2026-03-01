@@ -52,6 +52,21 @@ Karena aplikasi pakai guard device:
 4. Backup rutin:
    - Menu POS > Maintenance > Backup.
 
+## 5A. Mode 1 Klik (Disarankan)
+
+### PC Server
+1. Jalankan: `deployment\server\start_pos_server_oneclick.bat`
+2. Script akan:
+   - start Apache + MySQL,
+   - cek health lokal,
+   - tampilkan URL LAN POS.
+
+### PC Kasir
+1. Edit sekali file: `deployment\client\kiosk_config.ps1`
+   - isi `$ServerUrl` dengan URL server LAN yang benar.
+2. Jalankan: `deployment\client\start_pos_kiosk_oneclick.bat`
+3. Jika server tidak bisa dijangkau, script menampilkan pesan troubleshooting yang jelas.
+
 ## 6. Catatan keamanan minimum
 
 - Ganti password akun admin POS.

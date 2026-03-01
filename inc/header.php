@@ -258,6 +258,22 @@ if (!isset($no_header)) {
                         </ul>
                     </li>
 
+                    <!-- Print Label Barcode -->
+                    <li>
+                        <a href="#">Print Label Barcode <span class="arrow">&#9654;</span></a>
+                        <ul class="dropdown">
+                            <li><a href="<?=$base?>print_label_barcode/barcode_barang.php">Barcode Barang</a></li>
+                            <li>
+                                <a href="#">Price Card Label <span class="arrow">&#9654;</span></a>
+                                <ul class="dropdown">
+                                    <li><a href="<?=$base?>print_label_barcode/price_card_label_single.php">Single Satuan</a></li>
+                                    <li><a href="<?=$base?>print_label_barcode/price_card_label_multi.php">Multy Satuan</a></li>
+                                </ul>
+                            </li>
+                            <li><a href="<?=$base?>print_label_barcode/price_card_folio.php">Price Card Kertas Folio</a></li>
+                        </ul>
+                    </li>
+
                     <!-- System -->
                     <li><a href="<?=$base?>backup.php">Backup DB</a></li>
                     <li><a href="<?=$base?>restore.php">Restore DB</a></li>
