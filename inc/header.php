@@ -176,9 +176,17 @@ if (!isset($no_header)) {
                         <ul class="dropdown">
                             <li><a href="<?=$base?>stok_gudang/">Stok Gudang</a></li>
                             <li><a href="<?=$base?>stok_mutasi/">Mutasi Barang</a></li>
-                            <li><a href="<?=$base?>stok_opname/">Stok Opname</a></li>
                         </ul>
                     </li>
+
+                    <!-- Stok Opname -->
+                    <li>
+                        <a href="#">Stok Opname <span class="arrow">&#9654;</span></a>
+                        <ul class="dropdown">
+                            <li><a href="<?=$base?>stok_opname/">Stok Opname Data/Sistem</a></li>
+                            <li><a href="<?=$base?>stok_opname/">Stok Opname Data Fisik</a></li>
+                            <li><a href="<?=$base?>stok_opname/">Ajustment Stok Opname</a></li>
+                        </ul>
 
                     <!-- Pembelian -->
                     <li>
@@ -206,8 +214,19 @@ if (!isset($no_header)) {
                     <li>
                         <a href="#">Promo <span class="arrow">&#9654;</span></a>
                         <ul class="dropdown">
-                            <li><a href="<?=$base?>promo/">Promo</a></li>
-                            <li><a href="<?=$base?>promo_produk/">Promo Produk</a></li>
+                            <li><a href="<?=$base?>promo/index.php">Daftar Promosi</a></li>
+                            <hr style="color: aqua;">
+                            <li><a href="<?=$base?>promo/produk.php">Umum Perbarang</a></li>
+                            <li><a href="<?=$base?>promo/">Umum Persupplier</a></li>
+                            <li><a href="<?=$base?>promo/">Umum perkaegori</a></li>
+                            <hr style="color: aqua;">
+                            <li><a href="<?=$base?>promo/">Member Perbarang</a></li>
+                            <li><a href="<?=$base?>promo/">Member Persupplier</a></li>
+                            <li><a href="<?=$base?>promo/">Member perkategori</a></li>
+                            <li><a href="<?=$base?>promo/">Promo bersyarat</a></li>
+                            <hr style="color: aqua;">
+                            <li><a href="<?=$base?>promo/">Proses Didc. Regular</a></li>
+                            <li><a href="<?=$base?>promo/">Voucher Belanja</a></li>
                         </ul>
                     </li>
 
@@ -215,7 +234,6 @@ if (!isset($no_header)) {
                         <a href="#">Lainnya <span class="arrow">&#9654;</span></a>
                         <ul class="dropdown">
                             <li><a href="<?=$base?>lokasi/">Lokasi Rak</a></li>
-                            <li><a href="<?=$base?>atribut/">Atribut</a></li>
                         </ul>
                     </li>
                 </ul>
