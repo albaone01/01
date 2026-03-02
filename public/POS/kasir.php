@@ -257,6 +257,16 @@ if ($tokoId > 0) {
                     <div style="font-size: 12px; opacity: 0.7; margin-bottom: 5px;">TOTAL TAGIHAN</div>
                     <div id="grandTotal" style="font-size: 36px; font-weight: 800; letter-spacing: -1px;">Rp 0</div>
                 </div>
+                <div id="discountSummaryCard" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px 12px; margin-bottom:10px;">
+                    <div style="font-size:11px; font-weight:800; color:#64748b; letter-spacing:.08em;">RINGKASAN DISKON</div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:6px;"><span>Diskon Item</span><strong id="sumDiskonItem">Rp 0</strong></div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:4px;"><span>Promo</span><strong id="sumDiskonPromo">Rp 0</strong></div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:4px;"><span>Rule Bersyarat</span><strong id="sumDiskonRule">Rp 0</strong></div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:4px;"><span>Voucher</span><strong id="sumDiskonVoucher">Rp 0</strong></div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:4px;"><span>Tukar Poin</span><strong id="sumPotonganPoin">Rp 0</strong></div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px; margin-top:7px; padding-top:7px; border-top:1px dashed #cbd5e1;"><span>Total Bayar</span><strong id="sumTotalBayar">Rp 0</strong></div>
+                    <div id="appliedPromoBadge" style="font-size:11px; color:#166534; margin-top:6px;">Belum ada promo tambahan.</div>
+                </div>
                 <button onclick="openPayment()" style="width: 100%; padding: 16px; background: var(--primary); color: #fff; border: none; border-radius: 12px; font-weight: 800; font-size: 20px; cursor: pointer; box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.3);">
                     BAYAR [F10]
                 </button>
@@ -354,6 +364,18 @@ if ($tokoId > 0) {
                 </div>
             </div>
         </div>
+        <div style="margin-top:-4px; margin-bottom:16px; padding:12px 14px; border-radius:12px; border:1px solid #cbd5e1; background:#f8fafc;">
+            <div style="font-size:12px; font-weight:800; color:#334155; margin-bottom:8px;">VOUCHER BELANJA</div>
+            <div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;">
+                <input type="text" id="voucherCode" class="main-input" placeholder="Masukkan kode voucher" style="width:100%; font-size:15px; padding:10px 12px; text-transform:uppercase;">
+                <button type="button" id="btnCheckVoucher" class="btn-soft" style="width:auto; padding:10px 14px;">Cek</button>
+            </div>
+            <div id="voucherInfo" style="font-size:12px; color:#64748b; margin-top:6px;">Belum ada voucher.</div>
+        </div>
+        <div style="margin-top:-4px; margin-bottom:16px; padding:12px 14px; border-radius:12px; border:1px solid #cbd5e1; background:#eef6ff;">
+            <div style="font-size:12px; font-weight:800; color:#1e3a8a; margin-bottom:6px;">PROMO AKTIF TRANSAKSI</div>
+            <div id="payPromoInfo" style="font-size:12px; color:#334155;">Promo akan dihitung otomatis sesuai setting admin.</div>
+        </div>
         <label style="font-weight:700; font-size:13px;">METODE PEMBAYARAN</label>
         <select id="payMethod" style="width:100%; padding:12px; margin:6px 0 14px; border-radius:10px; border:2px solid #e2e8f0; font-weight: 600;">
             <option value="cash">TUNAI (CASH)</option>
@@ -362,6 +384,16 @@ if ($tokoId > 0) {
         </select>
         <label style="font-weight:700; font-size:13px;">UANG DITERIMA (CASH)</label>
         <input type="number" id="cashIn" class="main-input" placeholder="Masukkan nominal" style="width:100%; font-size:24px; margin-top:5px;">
+        <div style="margin-top:12px; display:grid; gap:8px;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; font-weight:700;">
+                <input type="checkbox" id="autoPrintReceipt" checked style="width:auto;">
+                Auto print struk setelah transaksi sukses
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; font-weight:700;">
+                <input type="checkbox" id="autoOpenDrawer" checked style="width:auto;">
+                Buka laci kas otomatis (metode cash)
+            </label>
+        </div>
         <div style="margin-top:25px; padding:15px; display:flex; justify-content:space-between; align-items:center; background:#f0fdf4; border-radius:10px;">
             <span style="font-weight:700; color:#166534;">KEMBALIAN</span>
             <span id="changeAmount" style="font-size:24px; font-weight:800; color:var(--success)">Rp 0</span>
@@ -431,8 +463,12 @@ const payMethodEl = document.getElementById('payMethod');
 const formatRp = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
 const HOLD_KEY = 'pos_hold_transactions_v1';
 const ACTIVE_KEY = 'pos_active_transaction_v1';
+const PRINT_PREF_KEY = 'pos_print_pref_v1';
 const POINT_NOMINAL = Number(<?= json_encode($memberPointNominal) ?>) > 0 ? Number(<?= json_encode($memberPointNominal) ?>) : 1000;
 const REDEEM_NOMINAL = Number(<?= json_encode($memberRedeemNominal) ?>) > 0 ? Number(<?= json_encode($memberRedeemNominal) ?>) : 1;
+let serverPricing = null;
+let previewTimer = null;
+let previewReqSeq = 0;
 
 function getHeldList() {
     try {
@@ -446,6 +482,90 @@ function getHeldList() {
 
 function setHeldList(list) {
     localStorage.setItem(HOLD_KEY, JSON.stringify(Array.isArray(list) ? list : []));
+}
+
+function loadPrintPrefs() {
+    try {
+        const raw = localStorage.getItem(PRINT_PREF_KEY);
+        if (!raw) return;
+        const p = JSON.parse(raw);
+        const elPrint = document.getElementById('autoPrintReceipt');
+        const elDrawer = document.getElementById('autoOpenDrawer');
+        if (elPrint && typeof p.auto_print === 'boolean') elPrint.checked = p.auto_print;
+        if (elDrawer && typeof p.auto_drawer === 'boolean') elDrawer.checked = p.auto_drawer;
+    } catch (e) {}
+}
+
+function savePrintPrefs() {
+    try {
+        const elPrint = document.getElementById('autoPrintReceipt');
+        const elDrawer = document.getElementById('autoOpenDrawer');
+        localStorage.setItem(PRINT_PREF_KEY, JSON.stringify({
+            auto_print: !!elPrint?.checked,
+            auto_drawer: !!elDrawer?.checked,
+        }));
+    } catch (e) {}
+}
+
+function buildPricingPayload() {
+    const redeemPoints = Math.max(0, parseInt(document.getElementById('redeemPoints')?.value || '0', 10));
+    return {
+        items: cart.map((i) => ({
+            produk_id: i.id,
+            qty: Number(i.qty_base || 0),
+            price: Number(i.manual_price_base ?? i.base_price ?? 0),
+            discount: Number(i.total_discount ?? i.diskon ?? 0),
+            tax_percent: Number(i.tax_percent || 0),
+        })),
+        pelanggan_id: selectedCustomer?.id || 0,
+        redeem_points: redeemPoints,
+        voucher_code: String(document.getElementById('voucherCode')?.value || '').trim().toUpperCase(),
+        point_nominal: POINT_NOMINAL,
+        redeem_nominal: REDEEM_NOMINAL,
+    };
+}
+
+function schedulePromoPreview() {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(requestPromoPreview, 180);
+}
+
+async function requestPromoPreview() {
+    if (!Array.isArray(cart) || cart.length === 0) {
+        serverPricing = null;
+        updatePaymentInfo();
+        return;
+    }
+    const seq = ++previewReqSeq;
+    const payload = buildPricingPayload();
+    try {
+        const res = await fetch('../../api/promo_preview.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': CSRF_TOKEN,
+            },
+            body: JSON.stringify(payload),
+        });
+        const d = await res.json();
+        if (seq !== previewReqSeq) return;
+        if (!res.ok || !d?.ok) {
+            serverPricing = null;
+        } else {
+            serverPricing = d;
+            const redeemInput = document.getElementById('redeemPoints');
+            const used = Number(d.summary?.redeem_points_used || 0);
+            if (redeemInput && Number(redeemInput.value || 0) !== used) {
+                redeemInput.value = String(used);
+            }
+        }
+        updatePaymentInfo();
+        saveActiveState();
+    } catch (e) {
+        if (seq !== previewReqSeq) return;
+        serverPricing = null;
+        updatePaymentInfo();
+    }
 }
 
 function applyCustomerUI() {
@@ -476,6 +596,7 @@ function saveActiveState() {
             payMethod: String(payMethodEl?.value || 'cash'),
             trxID: String(document.getElementById('trxID')?.innerText || ''),
             redeemPoints: Number(document.getElementById('redeemPoints')?.value || 0),
+            voucherCode: String(document.getElementById('voucherCode')?.value || ''),
         };
         localStorage.setItem(ACTIVE_KEY, JSON.stringify(payload));
     } catch (e) {}
@@ -509,8 +630,11 @@ function loadActiveState() {
         const redeemSaved = Math.max(0, parseInt(parsed?.redeemPoints ?? 0, 10));
         const redeemInput = document.getElementById('redeemPoints');
         if (redeemInput) redeemInput.value = String(redeemSaved);
+        const voucherEl = document.getElementById('voucherCode');
+        if (voucherEl) voucherEl.value = String(parsed?.voucherCode || '');
         applyCustomerUI();
         applyMemberDiscountToCart();
+        schedulePromoPreview();
     } catch (e) {}
 }
 
@@ -564,6 +688,7 @@ function applyMemberDiscountToCart() {
         if (item.prices) item.base_price = Number(item.prices.ecer ?? item.base_price ?? 0);
         recalcItem(item);
     });
+    schedulePromoPreview();
 }
 
 function buildUnits(p) {
@@ -613,6 +738,8 @@ function render() {
     });
     document.getElementById('grandTotal').innerText = formatRp(total);
     document.getElementById('modalTotal').innerText = formatRp(total);
+    updatePaymentInfo();
+    schedulePromoPreview();
     saveActiveState();
 }
 
@@ -724,6 +851,8 @@ function startNewOrder() {
     cart = [];
     selectedIdx = -1;
     clearCustomer();
+    document.getElementById('voucherCode').value = '';
+    serverPricing = null;
     render();
     cmdInput.focus();
 }
@@ -740,6 +869,7 @@ function holdCurrentTransaction(showAlert = true) {
         time: now.toISOString(),
         customer: selectedCustomer ? { ...selectedCustomer } : null,
         items: cart.map((x) => ({ ...x })),
+        voucher_code: String(document.getElementById('voucherCode')?.value || '').trim().toUpperCase(),
     };
     const list = getHeldList();
     list.unshift(payload);
@@ -747,6 +877,8 @@ function holdCurrentTransaction(showAlert = true) {
     cart = [];
     selectedIdx = -1;
     clearCustomer();
+    document.getElementById('voucherCode').value = '';
+    serverPricing = null;
     render();
     if (showAlert) alert(`Transaksi ditahan: ${code}`);
     cmdInput.focus();
@@ -791,6 +923,8 @@ function recallHeld(index) {
     const h = list[index];
     cart = (h.items || []).map((x) => ({ ...x }));
     selectedCustomer = h.customer ? { ...h.customer } : null;
+    document.getElementById('voucherCode').value = String(h.voucher_code || '');
+    serverPricing = null;
     applyCustomerUI();
     applyMemberDiscountToCart();
     list.splice(index, 1);
@@ -908,7 +1042,7 @@ function toggleCashInput() {
     updatePaymentInfo();
 }
 
-function getPaymentSummary() {
+function getLocalPaymentSummary() {
     const total = cart.reduce((s, i) => s + Number(i.subtotal || 0), 0);
     const redeemReq = Math.max(0, parseInt(document.getElementById('redeemPoints')?.value || '0', 10));
     const available = selectedCustomer ? Math.max(0, Number(selectedCustomer.saldo_poin || 0)) : 0;
@@ -917,7 +1051,46 @@ function getPaymentSummary() {
     const redeemPointsUsed = Math.max(0, Math.min(bySaldo, byTotal));
     const redeemDiscount = redeemPointsUsed * REDEEM_NOMINAL;
     const totalFinal = Math.max(0, total - redeemDiscount);
-    return { total, redeemReq, redeemPointsUsed, redeemDiscount, totalFinal };
+    return {
+        total,
+        redeemReq,
+        redeemPointsUsed,
+        redeemDiscount,
+        totalFinal,
+        diskonItem: cart.reduce((s, i) => s + Number(i.total_discount || 0), 0),
+        promoDiscount: 0,
+        ruleDiscount: 0,
+        voucherDiscount: 0,
+        poinDidapat: selectedCustomer ? Math.floor(Math.max(0, totalFinal) / POINT_NOMINAL) : 0,
+        appliedPromoName: '',
+        appliedRuleName: '',
+        appliedVoucherName: '',
+        appliedVoucherCode: '',
+    };
+}
+
+function getPaymentSummary() {
+    if (serverPricing && serverPricing.summary) {
+        const s = serverPricing.summary;
+        const a = serverPricing.applied || {};
+        return {
+            total: Number(s.subtotal || 0),
+            redeemReq: Number(document.getElementById('redeemPoints')?.value || 0),
+            redeemPointsUsed: Number(s.redeem_points_used || 0),
+            redeemDiscount: Number(s.potongan_poin || 0),
+            totalFinal: Number(s.total_akhir || 0),
+            diskonItem: Number(s.diskon_item || 0),
+            promoDiscount: Number(s.promo_diskon || 0),
+            ruleDiscount: Number(s.rule_diskon || 0),
+            voucherDiscount: Number(s.voucher_diskon || 0),
+            poinDidapat: Number(s.poin_didapat || 0),
+            appliedPromoName: String(a.promo_nama || ''),
+            appliedRuleName: String(a.rule_nama || ''),
+            appliedVoucherName: String(a.voucher_nama || ''),
+            appliedVoucherCode: String(a.voucher_kode || ''),
+        };
+    }
+    return getLocalPaymentSummary();
 }
 
 function updatePaymentInfo() {
@@ -930,7 +1103,7 @@ function updatePaymentInfo() {
     const change = cash - summary.totalFinal;
     document.getElementById('changeAmount').innerText = formatRp(change > 0 ? change : 0);
 
-    const poin = selectedCustomer ? Math.floor(Math.max(0, summary.totalFinal) / POINT_NOMINAL) : 0;
+    const poin = selectedCustomer ? Number(summary.poinDidapat || 0) : 0;
     const infoEl = document.getElementById('paymentPointInfo');
     const subEl = document.getElementById('paymentPointSub');
     const wrapEl = document.getElementById('paymentPointWrap');
@@ -981,6 +1154,44 @@ function updatePaymentInfo() {
         wrapEl.style.borderColor = '#f59e0b';
         wrapEl.style.boxShadow = '0 8px 18px rgba(245,158,11,0.22)';
     }
+    const sumItem = document.getElementById('sumDiskonItem');
+    const sumPromo = document.getElementById('sumDiskonPromo');
+    const sumRule = document.getElementById('sumDiskonRule');
+    const sumVoucher = document.getElementById('sumDiskonVoucher');
+    const sumPoin = document.getElementById('sumPotonganPoin');
+    const sumTotal = document.getElementById('sumTotalBayar');
+    const badge = document.getElementById('appliedPromoBadge');
+    const voucherInfo = document.getElementById('voucherInfo');
+    const payPromoInfo = document.getElementById('payPromoInfo');
+    if (sumItem) sumItem.innerText = formatRp(summary.diskonItem || 0);
+    if (sumPromo) sumPromo.innerText = formatRp(summary.promoDiscount || 0);
+    if (sumRule) sumRule.innerText = formatRp(summary.ruleDiscount || 0);
+    if (sumVoucher) sumVoucher.innerText = formatRp(summary.voucherDiscount || 0);
+    if (sumPoin) sumPoin.innerText = formatRp(summary.redeemDiscount || 0);
+    if (sumTotal) sumTotal.innerText = formatRp(summary.totalFinal || 0);
+    if (badge) {
+        const parts = [];
+        if (summary.appliedPromoName) parts.push(`Promo: ${summary.appliedPromoName}`);
+        if (summary.appliedRuleName) parts.push(`Rule: ${summary.appliedRuleName}`);
+        if (summary.appliedVoucherName || summary.appliedVoucherCode) {
+            const code = summary.appliedVoucherCode ? ` (${summary.appliedVoucherCode})` : '';
+            const vlabel = summary.appliedVoucherName || 'Voucher';
+            parts.push(`${vlabel}${code}`);
+        }
+        badge.innerText = parts.length ? parts.join(' | ') : 'Belum ada promo tambahan.';
+    }
+    if (voucherInfo) {
+        const vText = (summary.appliedVoucherName || summary.appliedVoucherCode)
+            ? `Voucher aktif: ${summary.appliedVoucherName || 'Voucher'}${summary.appliedVoucherCode ? ` (${summary.appliedVoucherCode})` : ''}`
+            : 'Belum ada voucher aktif.';
+        voucherInfo.innerText = vText;
+    }
+    if (payPromoInfo) {
+        const p = summary.appliedPromoName ? `Promo: ${summary.appliedPromoName}` : 'Promo: -';
+        const r = summary.appliedRuleName ? `Rule: ${summary.appliedRuleName}` : 'Rule: -';
+        const v = (summary.appliedVoucherName || summary.appliedVoucherCode) ? `Voucher: ${summary.appliedVoucherName || summary.appliedVoucherCode}` : 'Voucher: -';
+        payPromoInfo.innerText = `${p} | ${r} | ${v}`;
+    }
     document.getElementById('modalTotal').innerText = formatRp(summary.totalFinal);
     saveActiveState();
 }
@@ -1006,6 +1217,7 @@ function cancelPayment() {
     document.getElementById('cashIn').value = '';
     document.getElementById('changeAmount').innerText = formatRp(0);
     document.getElementById('redeemPoints').value = '0';
+    schedulePromoPreview();
     cmdInput.focus();
 }
 
@@ -1031,11 +1243,24 @@ document.getElementById('redeemPoints').addEventListener('keydown', function (e)
         cashEl.select();
     }
 });
+document.getElementById('voucherCode').addEventListener('input', function () {
+    this.value = String(this.value || '').toUpperCase();
+    schedulePromoPreview();
+});
+document.getElementById('voucherCode').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== 'NumpadEnter') return;
+    e.preventDefault();
+    schedulePromoPreview();
+});
+document.getElementById('btnCheckVoucher').addEventListener('click', function () {
+    schedulePromoPreview();
+});
 
 async function processFinal() {
     if (cart.length === 0) return alert('Keranjang kosong!');
     const summary = getPaymentSummary();
     const method = payMethodEl?.value || 'cash';
+    const voucherCode = String(document.getElementById('voucherCode')?.value || '').trim().toUpperCase();
     let amount = Number(document.getElementById('cashIn').value || 0);
     if (method !== 'cash') amount = summary.totalFinal;
     if (method === 'cash') {
@@ -1066,7 +1291,7 @@ async function processFinal() {
             body: JSON.stringify({
                 items,
                 pelanggan_id: selectedCustomer?.id || 0,
-                payment: { method, amount, redeem_points: summary.redeemPointsUsed },
+                payment: { method, amount, redeem_points: summary.redeemPointsUsed, voucher_code: voucherCode },
             }),
         });
         const raw = await res.text();
@@ -1082,15 +1307,19 @@ async function processFinal() {
         }
         if (!d) return alert('Gagal simpan transaksi: response server tidak valid');
         if (!d.ok) return alert(d.msg || 'Gagal simpan transaksi');
+        await triggerPostSalePrint(d, method);
         const bayarInfo = `\nUang diterima: ${formatRp(Number(d.uang_diterima || d.dibayar || 0))}\nDibayar (net): ${formatRp(Number(d.dibayar || 0))}\nKembalian: ${formatRp(Number(d.kembalian || 0))}`;
         const poinInfo = `\nPoin didapat: ${Number(d.poin_didapat || 0).toLocaleString('id-ID')}\nPoin ditukar: ${Number(d.poin_ditukar || 0).toLocaleString('id-ID')}`;
-        alert(`Transaksi berhasil\nInvoice: ${d.nomor}\nTotal: ${formatRp(d.total)}${bayarInfo}${poinInfo}`);
+        const promoInfo = `\nPromo: ${d.promo_nama || '-'} (${formatRp(Number(d.promo_diskon || 0))})\nRule: ${d.rule_nama || '-'} (${formatRp(Number(d.rule_diskon || 0))})\nVoucher: ${(d.voucher_nama || d.voucher_kode || '-')} (${formatRp(Number(d.voucher_diskon || 0))})`;
+        alert(`Transaksi berhasil\nInvoice: ${d.nomor}\nTotal: ${formatRp(d.total)}${bayarInfo}${poinInfo}${promoInfo}`);
         if (selectedCustomer) {
             selectedCustomer.saldo_poin = Math.max(0, Number(selectedCustomer.saldo_poin || 0) - Number(d.poin_ditukar || 0) + Number(d.poin_didapat || 0));
             selectedCustomer.total_belanja_bulan = Math.max(0, Number(selectedCustomer.total_belanja_bulan || 0) + Number(d.total || 0));
             applyCustomerUI();
         }
         document.getElementById('redeemPoints').value = '0';
+        document.getElementById('voucherCode').value = '';
+        serverPricing = null;
         cart = [];
         selectedIdx = -1;
         clearCustomer();
@@ -1100,6 +1329,35 @@ async function processFinal() {
         saveActiveState();
     } catch (e) {
         alert(`Gagal koneksi ke server transaksi. ${e?.message || ''}`.trim());
+    }
+}
+
+async function triggerPostSalePrint(saleResp, method) {
+    const autoPrint = !!document.getElementById('autoPrintReceipt')?.checked;
+    const autoDrawer = !!document.getElementById('autoOpenDrawer')?.checked;
+    if (!autoPrint && !autoDrawer) return;
+    const penjualanId = Number(saleResp?.penjualan_id || 0);
+    if (!penjualanId) return;
+    const fd = new FormData();
+    fd.set('penjualan_id', String(penjualanId));
+    fd.set('auto_print', autoPrint ? '1' : '0');
+    fd.set('open_drawer', (autoDrawer && method === 'cash') ? '1' : '0');
+    try {
+        const r = await fetch('../../api/pos_postsale_print.php', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': CSRF_TOKEN,
+            },
+            body: fd,
+        });
+        const d = await r.json();
+        if (!r.ok || !d?.ok) {
+            console.warn('post-sale print failed', d);
+            alert(`Transaksi tersimpan, tetapi print/laci gagal: ${d?.msg || 'Unknown error'}`);
+        }
+    } catch (e) {
+        console.warn('post-sale print exception', e);
+        alert(`Transaksi tersimpan, tetapi print/laci gagal: ${e?.message || 'Unknown error'}`);
     }
 }
 
@@ -1346,6 +1604,9 @@ if (custSearchInput) {
 }
 
 loadActiveState();
+loadPrintPrefs();
+document.getElementById('autoPrintReceipt').addEventListener('change', savePrintPrefs);
+document.getElementById('autoOpenDrawer').addEventListener('change', savePrintPrefs);
 render();
 
 // tombol kembali pakai logo

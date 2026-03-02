@@ -183,10 +183,11 @@ if (!isset($no_header)) {
                     <li>
                         <a href="#">Stok Opname <span class="arrow">&#9654;</span></a>
                         <ul class="dropdown">
-                            <li><a href="<?=$base?>stok_opname/">Stok Opname Data/Sistem</a></li>
-                            <li><a href="<?=$base?>stok_opname/">Stok Opname Data Fisik</a></li>
-                            <li><a href="<?=$base?>stok_opname/">Ajustment Stok Opname</a></li>
+                            <li><a href="<?=$base?>stok_opname/index.php">Stok Opname Data/Sistem</a></li>
+                            <li><a href="<?=$base?>stok_opname/fisik.php">Stok Opname Data Fisik</a></li>
+                            <li><a href="<?=$base?>stok_opname/adjustment.php">Ajustment Stok Opname</a></li>
                         </ul>
+                    </li>
 
                     <!-- Pembelian -->
                     <li>
@@ -217,28 +218,22 @@ if (!isset($no_header)) {
                             <li><a href="<?=$base?>promo/index.php">Daftar Promosi</a></li>
                             <hr style="color: aqua;">
                             <li><a href="<?=$base?>promo/produk.php">Umum Perbarang</a></li>
-                            <li><a href="<?=$base?>promo/">Umum Persupplier</a></li>
-                            <li><a href="<?=$base?>promo/">Umum perkaegori</a></li>
+                            <li><a href="<?=$base?>promo/umum_supplier.php">Umum Persupplier</a></li>
+                            <li><a href="<?=$base?>promo/umum_kategori.php">Umum Perkategori</a></li>
                             <hr style="color: aqua;">
-                            <li><a href="<?=$base?>promo/">Member Perbarang</a></li>
-                            <li><a href="<?=$base?>promo/">Member Persupplier</a></li>
-                            <li><a href="<?=$base?>promo/">Member perkategori</a></li>
-                            <li><a href="<?=$base?>promo/">Promo bersyarat</a></li>
+                            <li><a href="<?=$base?>promo/member_produk.php">Member Perbarang</a></li>
+                            <li><a href="<?=$base?>promo/member_supplier.php">Member Persupplier</a></li>
+                            <li><a href="<?=$base?>promo/member_kategori.php">Member Perkategori</a></li>
+                            <li><a href="<?=$base?>promo/promo_bersyarat.php">Promo Bersyarat</a></li>
                             <hr style="color: aqua;">
-                            <li><a href="<?=$base?>promo/">Proses Didc. Regular</a></li>
-                            <li><a href="<?=$base?>promo/">Voucher Belanja</a></li>
+                            <li><a href="<?=$base?>promo/proses_diskon_regular.php">Proses Disc. Regular</a></li>
+                            <li><a href="<?=$base?>promo/voucher_belanja.php">Voucher Belanja</a></li>
                         </ul>
                     </li>
 
-                    <li>
-                        <a href="#">Lainnya <span class="arrow">&#9654;</span></a>
-                        <ul class="dropdown">
-                            <li><a href="<?=$base?>lokasi/">Lokasi Rak</a></li>
-                        </ul>
-                    </li>
+                    <li><a href="<?=$base?>lokasi/">Lokasi Rak</a></li>
                 </ul>
             </li>
-
 
             <!-- ================= LAPORAN ================= -->
             <li>

@@ -6,6 +6,7 @@ require_once '../inc/auth.php';
 require_once '../inc/csrf.php';
 require_once '../inc/inventory.php';
 require_once '../inc/pos_saas_schema.php';
+require_once '../inc/promo_engine.php';
 
 header('Content-Type: application/json');
 
@@ -44,34 +45,7 @@ ensure_inventory_snapshot_columns($pos_db);
 try {
     $pos_db->query("ALTER TABLE penjualan_detail MODIFY tipe_harga ENUM('ecer','grosir','member','reseller') NOT NULL");
 } catch (Exception $e) {}
-try {
-    $pos_db->query("
-        CREATE TABLE IF NOT EXISTS promo (
-            promo_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            toko_id BIGINT NOT NULL,
-            nama_promo VARCHAR(100) NOT NULL,
-            tipe ENUM('persen','nominal','gratis') NOT NULL,
-            nilai DECIMAL(15,2) NOT NULL DEFAULT 0,
-            minimal_belanja DECIMAL(15,2) DEFAULT 0,
-            berlaku_dari DATETIME NOT NULL,
-            berlaku_sampai DATETIME NOT NULL,
-            aktif TINYINT(1) DEFAULT 1,
-            dibuat_pada TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            deleted_at TIMESTAMP NULL DEFAULT NULL,
-            KEY idx_promo_toko (toko_id),
-            KEY idx_promo_active (toko_id, aktif, berlaku_dari, berlaku_sampai)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ");
-    $pos_db->query("
-        CREATE TABLE IF NOT EXISTS promo_produk (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            promo_id BIGINT NOT NULL,
-            produk_id BIGINT NOT NULL,
-            UNIQUE KEY uq_promo_produk (promo_id, produk_id),
-            KEY idx_pp_produk (produk_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ");
-} catch (Exception $e) {}
+promo_ensure_tables($pos_db);
 if ($gudangId <= 0) {
     $stGud = $pos_db->prepare("SELECT gudang_id FROM gudang WHERE toko_id=? AND aktif=1 AND deleted_at IS NULL ORDER BY CASE WHEN nama_gudang='Gudang Utama' THEN 0 ELSE 1 END, gudang_id LIMIT 1");
     $stGud->bind_param('i', $tokoId);
@@ -136,6 +110,7 @@ $payMethod = strtolower($payment['method'] ?? 'cash');
 $payAmount = (float)($payment['amount'] ?? 0);
 $payAmount = max(0, $payAmount);
 $redeemPointsRequest = max(0, (int)($payment['redeem_points'] ?? 0));
+$voucherCode = strtoupper(trim((string)($payment['voucher_code'] ?? '')));
 
 // Hitung ulang di server
 $subtotal = 0.0;
@@ -148,7 +123,7 @@ $pidList = array_column($normItems, 'produk_id');
 $in  = implode(',', array_fill(0, count($pidList), '?'));
 $typ = str_repeat('i', count($pidList));
 
-$stmt = $pos_db->prepare("SELECT p.produk_id, p.nama_produk, p.harga_modal, p.satuan, COALESCE(p.hpp_aktif,0) AS hpp_aktif, COALESCE(p.is_jasa,0) AS is_jasa,
+$stmt = $pos_db->prepare("SELECT p.produk_id, p.nama_produk, p.harga_modal, p.satuan, p.supplier_id, p.kategori_id, COALESCE(p.hpp_aktif,0) AS hpp_aktif, COALESCE(p.is_jasa,0) AS is_jasa,
                                  COALESCE(SUM(sg.stok),0) AS stok
                           FROM produk p
                           LEFT JOIN stok_gudang sg ON sg.produk_id = p.produk_id AND sg.gudang_id = ?
@@ -190,6 +165,8 @@ foreach ($normItems as $it) {
         'line_after_disc' => $lineAfterDisc,
         'harga_modal'=> ((float)$pinfo['hpp_aktif'] > 0 ? (float)$pinfo['hpp_aktif'] : (float)$pinfo['harga_modal']),
         'satuan'     => $pinfo['satuan'],
+        'supplier_id'=> (int)($pinfo['supplier_id'] ?? 0),
+        'kategori_id'=> (int)($pinfo['kategori_id'] ?? 0),
         'price_type' => $it['price_type'],
         'stok'       => (float)$pinfo['stok'],
         'nama_produk'=> $pinfo['nama_produk'],
@@ -197,11 +174,23 @@ foreach ($normItems as $it) {
     ];
 }
 
-$promoCalc = hitung_diskon_promo($pos_db, $tokoId, $lines, $subtotal, $diskon);
-$promoDiscount = max(0, (float)($promoCalc['diskon'] ?? 0));
-$promoUsed = $promoCalc['promo'] ?? null;
+$promoEval = promo_evaluate(
+    $pos_db,
+    $tokoId,
+    $lines,
+    $subtotal,
+    $diskon,
+    $pelangganId > 0,
+    $voucherCode
+);
+$promoDiscount = max(0, (float)($promoEval['promo_discount'] ?? 0));
+$ruleDiscount = max(0, (float)($promoEval['rule_discount'] ?? 0));
+$voucherDiscount = max(0, (float)($promoEval['voucher_discount'] ?? 0));
+$promoUsed = $promoEval['promo'] ?? null;
+$ruleUsed = $promoEval['rule'] ?? null;
+$voucherUsed = $promoEval['voucher'] ?? null;
 
-$totalAkhir = $subtotal - ($diskon + $promoDiscount) + $pajak;
+$totalAkhir = $subtotal - ($diskon + $promoDiscount + $ruleDiscount + $voucherDiscount) + $pajak;
 if ($redeemPointsRequest > 0 && $pelangganId <= 0) {
     exit(json_encode(['ok' => false, 'msg' => 'Penukaran poin memerlukan pelanggan']));
 }
@@ -288,83 +277,6 @@ function get_toko_config(Database $db, int $tokoId, string $key, string $default
     return isset($row['nilai']) ? (string)$row['nilai'] : $default;
 }
 
-function hitung_diskon_promo(Database $db, int $tokoId, array $lines, float $subtotal, float $diskonItem): array {
-    $baseTotal = max(0, $subtotal - $diskonItem);
-    if ($baseTotal <= 0) return ['diskon' => 0.0, 'promo' => null];
-
-    $stmt = $db->prepare("
-        SELECT promo_id, nama_promo, tipe, nilai, minimal_belanja
-        FROM promo
-        WHERE toko_id=?
-          AND aktif=1
-          AND deleted_at IS NULL
-          AND NOW() BETWEEN berlaku_dari AND berlaku_sampai
-          AND minimal_belanja <= ?
-    ");
-    $stmt->bind_param('id', $tokoId, $baseTotal);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $promos = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
-    $stmt->close();
-    if (!$promos) return ['diskon' => 0.0, 'promo' => null];
-
-    $lineMap = [];
-    foreach ($lines as $ln) $lineMap[(int)$ln['produk_id']] = (float)$ln['line_after_disc'];
-
-    $promoIds = array_map(static fn($p) => (int)$p['promo_id'], $promos);
-    $promoProduk = [];
-    if (!empty($promoIds)) {
-        $ph = implode(',', array_fill(0, count($promoIds), '?'));
-        $types = str_repeat('i', count($promoIds));
-        $st = $db->prepare("SELECT promo_id, produk_id FROM promo_produk WHERE promo_id IN ($ph)");
-        $st->bind_param($types, ...$promoIds);
-        $st->execute();
-        $rr = $st->get_result();
-        while ($rw = $rr->fetch_assoc()) {
-            $pid = (int)$rw['promo_id'];
-            if (!isset($promoProduk[$pid])) $promoProduk[$pid] = [];
-            $promoProduk[$pid][(int)$rw['produk_id']] = 1;
-        }
-        $st->close();
-    }
-
-    $best = 0.0;
-    $bestPromo = null;
-    foreach ($promos as $p) {
-        $promoId = (int)$p['promo_id'];
-        $scopeBase = $baseTotal;
-        if (!empty($promoProduk[$promoId])) {
-            $scopeBase = 0.0;
-            foreach ($promoProduk[$promoId] as $prodId => $_) {
-                $scopeBase += (float)($lineMap[$prodId] ?? 0);
-            }
-        }
-        if ($scopeBase <= 0) continue;
-
-        $tipe = (string)$p['tipe'];
-        $nilai = max(0, (float)$p['nilai']);
-        $disc = 0.0;
-        if ($tipe === 'persen') {
-            $disc = $scopeBase * $nilai / 100;
-        } elseif ($tipe === 'nominal') {
-            $disc = $nilai;
-        } else {
-            $disc = 0.0;
-        }
-        $disc = min($disc, $scopeBase);
-        if ($disc > $best) {
-            $best = $disc;
-            $bestPromo = [
-                'promo_id' => $promoId,
-                'nama_promo' => (string)$p['nama_promo'],
-                'tipe' => $tipe,
-                'nilai' => $nilai,
-            ];
-        }
-    }
-    return ['diskon' => $best, 'promo' => $bestPromo];
-}
-
 $pointNominal = (float)get_toko_config($pos_db, $tokoId, 'member_point_nominal', '1000');
 if ($pointNominal <= 0) $pointNominal = 1000.0;
 $redeemNominal = (float)get_toko_config($pos_db, $tokoId, 'member_redeem_nominal', '1');
@@ -376,7 +288,7 @@ $payAmountFinal = 0.0; // jumlah efektif yang diakui sebagai pembayaran (net)
 $payReceived = 0.0;    // uang yang diterima dari pelanggan
 $payChange = 0.0;      // kembalian
 $totalAkhirFinal = $totalAkhir;
-$diskonFinal = $diskon + $promoDiscount;
+$diskonFinal = $diskon + $promoDiscount + $ruleDiscount + $voucherDiscount;
 $sisa = 0.0;
 
 $pos_db->begin_transaction();
@@ -400,7 +312,7 @@ try {
         $potonganPoin = $poinDitukar * $redeemNominal;
     }
 
-    $diskonFinal = $diskon + $promoDiscount + $potonganPoin;
+    $diskonFinal = $diskon + $promoDiscount + $ruleDiscount + $voucherDiscount + $potonganPoin;
     $totalAkhirFinal = max(0, $totalAkhir - $potonganPoin);
     if (in_array($payMethod, ['qris', 'transfer'], true)) {
         // transfer/qris selalu dicatat lunas sesuai total akhir
@@ -489,6 +401,14 @@ try {
         $pstmt->close();
     }
 
+    if ($voucherUsed && (int)($voucherUsed['voucher_id'] ?? 0) > 0 && $voucherDiscount > 0) {
+        $voucherIdUsed = (int)$voucherUsed['voucher_id'];
+        $vu = $pos_db->prepare("UPDATE voucher_belanja SET terpakai = terpakai + 1 WHERE voucher_id=? AND toko_id=? AND terpakai < kuota");
+        $vu->bind_param('ii', $voucherIdUsed, $tokoId);
+        $vu->execute();
+        $vu->close();
+    }
+
     // Poin member dari transaksi: rasio nominal/koin mengikuti pengaturan admin toko.
     if ($pelangganId > 0) {
         $earnedPoint = $poinDidapat;
@@ -561,6 +481,14 @@ try {
         'promo_id' => $promoUsed['promo_id'] ?? null,
         'promo_nama' => $promoUsed['nama_promo'] ?? '',
         'promo_diskon' => $promoDiscount,
+        'promo_scope_base' => $promoUsed['scope_base'] ?? 0,
+        'rule_id' => $ruleUsed['rule_id'] ?? null,
+        'rule_nama' => $ruleUsed['nama_rule'] ?? '',
+        'rule_diskon' => $ruleDiscount,
+        'voucher_id' => $voucherUsed['voucher_id'] ?? null,
+        'voucher_kode' => $voucherUsed['kode_voucher'] ?? '',
+        'voucher_nama' => $voucherUsed['nama_voucher'] ?? '',
+        'voucher_diskon' => $voucherDiscount,
     ]);
 } catch (Throwable $e) {
     $pos_db->rollback();
