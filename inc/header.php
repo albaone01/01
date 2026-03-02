@@ -211,6 +211,13 @@ if (!isset($no_header)) {
                         </ul>
                     </li>
 
+                    <li>
+                        <a href="#">Lainnya <span class="arrow">&#9654;</span></a>
+                        <ul class="dropdown">
+                            <li><a href="<?=$base?>lokasi/">Lokasi Rak</a></li>
+                            <li><a href="<?=$base?>atribut/">Atribut</a></li>
+                        </ul>
+                    </li>
                 </ul>
             </li>
 

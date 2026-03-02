@@ -10,8 +10,12 @@ $tokoId = $_SESSION['toko_id'] ?? 3;
 
 $q      = $_GET['q'] ?? '';
 $kat    = $_GET['kat'] ?? '';
+$supplierId = $_GET['supplier'] ?? '';
 $status = $_GET['status'] ?? '';
 $low    = $_GET['low'] ?? '';
+$page   = $_GET['page'] ?? 1;
+$limit  = 50;
+$offset = ($page - 1) * $limit;
 $csrfToken = csrf_token();
 
 function fetch_all_stmt(mysqli_stmt $stmt): array {
@@ -43,7 +47,7 @@ $kategori = fetch_all_stmt($stmt);
 $stmt->close();
 
 /* Dropdown supplier */
-$stmt = $db->prepare("SELECT supplier_id,nama_supplier FROM supplier WHERE toko_id=? ORDER BY nama_supplier");
+$stmt = $db->prepare("SELECT supplier_id,nama_supplier FROM supplier WHERE toko_id=? AND deleted_at IS NULL ORDER BY nama_supplier");
 $stmt->bind_param("i", $tokoId);
 $stmt->execute();
 $supplier = fetch_all_stmt($stmt);
@@ -94,7 +98,7 @@ $res = $db->query("SELECT pajak_id,nama,persen FROM pajak WHERE aktif=1 ORDER BY
 if($res) $pajakList = $res->fetch_all(MYSQLI_ASSOC);
 
 /* Build filter */
-$where  = ["p.toko_id = ?"];
+$where  = ["p.toko_id = ?", "p.deleted_at IS NULL"];
 $types  = "i";
 $params = [$tokoId];
 
@@ -108,11 +112,30 @@ if ($kat !== '') {
     $types  .= "i";
     $params[] = (int)$kat;
 }
+if ($supplierId !== '') {
+    $where[] = "p.supplier_id = ?";
+    $types  .= "i";
+    $params[] = (int)$supplierId;
+}
 if ($status !== '') {
     $where[] = "p.aktif = ?";
     $types  .= "i";
     $params[] = (int)$status;
 }
+
+// Hitung total untuk load more
+$countSql = "
+SELECT COUNT(DISTINCT p.produk_id) as total
+FROM produk p
+LEFT JOIN kategori_produk k ON k.kategori_id = p.kategori_id
+LEFT JOIN stok_gudang sg ON sg.produk_id = p.produk_id
+WHERE " . implode(' AND ', $where);
+$stmt = $db->prepare($countSql);
+$stmt->bind_param($types, ...$params);
+$stmt->execute();
+$totalResult = $stmt->get_result()->fetch_assoc();
+$totalProduk = $totalResult['total'] ?? 0;
+$stmt->close();
 
 $sql = "
 SELECT p.produk_id, p.sku, p.barcode, p.nama_produk, p.merk, p.satuan,
@@ -128,7 +151,10 @@ LEFT JOIN supplier sup ON sup.supplier_id = p.supplier_id
 WHERE " . implode(' AND ', $where) . "
 GROUP BY p.produk_id
 ORDER BY p.nama_produk
-LIMIT 300";
+LIMIT ? OFFSET ?";
+
+$types .= "ii";
+array_push($params, $limit, $offset);
 
 $stmt = $db->prepare($sql);
 $stmt->bind_param($types, ...$params);
@@ -192,7 +218,6 @@ if ($ids) {
     $stmt->close();
 }
 
-$totalProduk = count($items);
 $aktifProduk = array_sum(array_column($items, 'aktif'));
 $nilaiStok   = 0;
 $lowStock    = 0;
@@ -203,998 +228,1536 @@ foreach ($items as $it) {
 ?>
 
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     :root {
-        --primary: #0ea5e9;
-        --primary-strong: #0284c7;
-        --accent: #f97316;
+        --primary: #2563eb;
+        --primary-dark: #1d4ed8;
         --success: #10b981;
         --warning: #f59e0b;
         --danger: #ef4444;
-        --bg: #f5f7fb;
+        --bg: #f9fafb;
         --card: #ffffff;
-        --text: #0f172a;
-        --muted: #64748b;
+        --text: #1e293b;
+        --text-light: #64748b;
         --border: #e2e8f0;
-        --shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+        --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     }
-    body {
-        font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
-        background: linear-gradient(135deg, #0f172a 0%, #0b5fa1 55%, #0ea5e9 100%) fixed;
-        color: var(--text);
+
+    * {
         margin: 0;
+        padding: 0;
+        box-sizing: border-box;
     }
+
+    body {
+        font-family: 'Inter', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+    }
+
     .page {
-        min-height: 100vh;
-        padding: 14px 12px 20px;
-        background: radial-gradient(circle at 10% 20%, rgba(255,255,255,0.08), transparent 24%),
-                    radial-gradient(circle at 90% 10%, rgba(14,165,233,0.15), transparent 30%),
-                    linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.08) 40%, rgba(245,247,251,1) 75%);
-    }
-    .container {
-        max-width: 1400px;
+        padding: 16px;
+        max-width: 1440px;
         margin: 0 auto;
     }
 
-    /* Hero */
-    .hero {
-        background: var(--card);
-        border: 1px solid rgba(255,255,255,0.5);
-        box-shadow: var(--shadow);
-        border-radius: 18px;
-        padding: 14px 16px;
-        display: grid;
-        grid-template-columns: 1.4fr 1fr;
-        gap: 12px;
-        position: relative;
-        overflow: hidden;
+    /* Header Section */
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
     }
-    .hero::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        background: radial-gradient(circle at 80% 10%, rgba(14,165,233,0.12), transparent 45%),
-                    radial-gradient(circle at 30% 20%, rgba(249,115,22,0.08), transparent 40%);
-        pointer-events: none;
+
+    .header-title h1 {
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--text);
     }
-    .hero h1 { margin: 2px 0 4px; font-size: 24px; font-weight: 700; }
-    .eyebrow { color: var(--primary-strong); font-weight: 700; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0; }
-    .hero p { color: var(--muted); margin: 0 0 8px; max-width: 560px; }
-    .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; z-index: 1; }
+
+    .header-title p {
+        color: var(--text-light);
+        font-size: 14px;
+        margin-top: 4px;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
 
     /* Buttons */
     .btn {
-        padding: 8px 12px;
-        border-radius: 10px;
-        font-weight: 600;
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 500;
+        font-size: 14px;
         cursor: pointer;
         border: 1px solid transparent;
-        transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+        transition: all 0.2s ease;
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        font-size: 14px;
     }
-    .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-strong)); color: #fff; box-shadow: 0 12px 30px rgba(14,165,233,0.25); }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 16px 40px rgba(14,165,233,0.3); }
-    .btn-ghost { background: rgba(14,165,233,0.08); color: var(--primary-strong); border-color: rgba(14,165,233,0.2); }
-    .btn-ghost:hover { background: rgba(14,165,233,0.12); }
-    .btn-outline { background: #fff; border-color: var(--border); color: var(--text); }
-    .btn-outline:hover { background: #f8fafc; }
 
-    /* Stat cards */
-    .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; z-index: 1; }
-    .metric-card {
-        background: linear-gradient(145deg, #0b0f1f, #0f172a);
-        color: #e2e8f0;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(255,255,255,0.06);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-    }
-    .metric-card small { color: #94a3b8; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    .metric-value { font-size: 18px; font-weight: 700; margin: 4px 0 2px; color: #e2e8f0; }
-    .metric-trend { font-size: 13px; color: #a5b4fc; }
-
-    /* Panel */
-    .panel {
-        margin-top: 10px;
-        background: var(--card);
-        border-radius: 16px;
-        border: 1px solid var(--border);
+    .btn-primary {
+        background: var(--primary);
+        color: white;
         box-shadow: var(--shadow);
-        overflow: hidden;
     }
-    .toolbar {
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        align-items: center;
-        background: linear-gradient(90deg, rgba(14,165,233,0.06), rgba(255,255,255,1));
+
+    .btn-primary:hover {
+        background: var(--primary-dark);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 10px -1px rgb(0 0 0 / 0.15);
     }
-    .toolbar .field {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: #fff;
+
+    .btn-primary:active {
+        transform: translateY(0);
+    }
+
+    .btn-outline {
+        background: white;
+        border-color: var(--border);
+        color: var(--text);
+    }
+
+    .btn-outline:hover {
+        background: var(--bg);
+        border-color: #cbd5e1;
+    }
+
+    .btn-icon {
+        padding: 8px;
+        border-radius: 8px;
+        background: white;
         border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 7px 9px;
+        cursor: pointer;
+        transition: all 0.2s ease;
     }
-    .toolbar input[type="text"], .toolbar select {
+
+    .btn-icon:hover {
+        background: var(--bg);
+        border-color: #cbd5e1;
+    }
+
+    /* Metric Cards - Minimal */
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .metric-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        transition: all 0.2s ease;
+    }
+
+    .metric-card:hover {
+        border-color: var(--primary);
+        box-shadow: var(--shadow);
+    }
+
+    .metric-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-light);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .metric-value {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text);
+        margin-top: 4px;
+    }
+
+    .metric-trend {
+        font-size: 11px;
+        color: var(--text-light);
+        margin-top: 4px;
+    }
+
+    /* Search Bar */
+    .search-container {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 16px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .search-box {
+        flex: 1;
+        min-width: 280px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0 8px;
+    }
+
+    .search-box i {
+        color: var(--text-light);
+        font-size: 16px;
+    }
+
+    .search-box input {
+        flex: 1;
+        padding: 8px 0;
         border: none;
         outline: none;
         font-size: 14px;
-        color: var(--text);
-        min-width: 160px;
         background: transparent;
     }
-    .toolbar .pill-group { display: inline-flex; gap: 6px; }
-    .pill {
-        padding: 6px 10px;
-        border-radius: 999px;
-        border: 1px solid var(--border);
-        background: #fff;
-        font-weight: 600;
-        color: var(--muted);
-        cursor: pointer;
-        transition: all .2s ease;
-        text-decoration: none;
+
+    .filter-group {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
     }
-    .pill.active { background: rgba(14,165,233,0.1); color: var(--primary-strong); border-color: rgba(14,165,233,0.25); }
+
+    .filter-select {
+        position: relative;
+        min-width: 160px;
+    }
+
+    .filter-select select {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+        background: white;
+        cursor: pointer;
+        outline: none;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+    }
+
+    .filter-select select:hover {
+        border-color: var(--primary);
+    }
+
+    .status-pills {
+        display: flex;
+        gap: 4px;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 3px;
+    }
+
+    .status-pill {
+        padding: 5px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        background: transparent;
+        color: var(--text-light);
+        border: none;
+    }
+
+    .status-pill.active {
+        background: var(--primary);
+        color: white;
+    }
 
     /* Table */
-    .table-wrap { overflow: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    thead th {
-        background: #f8fafc;
-        color: var(--muted);
+    .table-container {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    th {
         text-align: left;
-        font-weight: 700;
-        padding: 9px 10px;
+        padding: 10px 8px;
+        background: #f8fafc;
+        color: var(--text-light);
+        font-weight: 600;
         border-bottom: 1px solid var(--border);
-        position: sticky;
-        top: 0;
-        z-index: 2;
+        white-space: nowrap;
     }
-    tbody td {
-        padding: 9px 10px;
-        border-bottom: 1px solid #eef2f6;
+
+    td {
+        padding: 8px;
+        border-bottom: 1px solid #f1f5f9;
         color: var(--text);
-        background: #fff;
     }
-    tbody tr:hover td { background: #f8fbff; }
 
-    .product-info { display: flex; align-items: center; gap: 8px; }
-    .product-img { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; background: #e2e8f0; border: 1px solid #e2e8f0; }
-    .product-name { font-weight: 700; }
-    .meta { color: var(--muted); font-size: 12px; }
+    tr:hover td {
+        background: #f8fafc;
+    }
 
-    .badge { padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
-    .badge-success { background: rgba(16,185,129,0.12); color: #0f9f6e; }
-    .badge-danger { background: rgba(239,68,68,0.12); color: #c53030; }
-    .badge-warning { background: rgba(245,158,11,0.16); color: #b45309; }
-    .badge-muted { background: #f1f5f9; color: var(--muted); }
+    .product-name {
+        font-weight: 500;
+        margin-bottom: 2px;
+    }
+
+    .product-meta {
+        font-size: 11px;
+        color: var(--text-light);
+    }
+
+    /* Badges */
+    .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .badge-success {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .badge-warning {
+        background: #fed7aa;
+        color: #92400e;
+    }
+
+    .badge-danger {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .badge-muted {
+        background: #f1f5f9;
+        color: var(--text-light);
+    }
+
+    .badge-active {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+
+    /* Action Buttons */
+    .action-btn {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        background: white;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        color: var(--text);
+    }
+
+    .action-btn:hover {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+
+    /* Load More */
+    .load-more {
+        padding: 12px;
+        text-align: center;
+        border-top: 1px solid var(--border);
+    }
+
+    .load-more-btn {
+        padding: 8px 16px;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .load-more-btn:hover {
+        background: var(--bg);
+        border-color: #cbd5e1;
+    }
+
+    .loading-spinner {
+        display: none;
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
 
     /* Modal */
-    .modal { display:none; position:fixed; z-index:100; left:0; top:30; width:100%; height:100%; background:rgba(0,0,0,0.45); backdrop-filter: blur(6px); }
-    .modal-content { background:#fff; margin:3% auto; width:92%; max-width:700px; border-radius:14px; box-shadow:0 24px 60px rgba(15,23,42,0.3); }
-    .modal-header { padding:10px 12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
-    .modal-body { padding:10px 12px; max-height: 72vh; overflow-y: auto; }
-    .form-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:8px; }
-    .full-width { grid-column: 1 / -1; }
-    
-    input, select { width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:8px; box-sizing:border-box; margin-top:3px; font-family:inherit; background:#f8fafc; font-size:12px; }
-    input:focus, select:focus { outline: 2px solid rgba(14,165,233,0.2); background:#fff; }
-    label { font-size:13px; font-weight:700; color: var(--muted); }
-    .collapse-card { display: none; margin-top: 6px; padding: 8px; border: 1px dashed rgba(14,165,233,0.4); border-radius: 10px; background: rgba(14,165,233,0.06); }
-    .collapse-card.show { display: block; }
-    .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .field-error { color: #b42318; font-size: 12px; margin-top: 4px; min-height: 14px; display:block; }
-    .input-invalid { border-color: #fca5a5 !important; background: #fff1f2 !important; }
-    .error-banner { display:none; margin-bottom:8px; padding:8px 10px; border-radius:8px; border:1px solid #fecaca; background:#fff1f2; color:#991b1b; font-size:12px; }
-    .inline-actions { display:flex; gap:6px; margin-top:4px; }
-    .price-preview { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:6px; margin-top:6px; }
-    .price-preview .item { font-size:11px; color:var(--muted); background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:6px; }
-    .sat-row { display:grid; grid-template-columns: 1fr 120px 46px; gap:6px; margin-bottom:6px; }
-    .sat-row input { margin-top:0; }
-
-    @media (max-width: 1024px) {
-        .hero { grid-template-columns: 1fr; }
-        .metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        backdrop-filter: blur(4px);
+        align-items: center;
+        justify-content: center;
     }
-    @media (max-width: 720px) {
-        .metrics { grid-template-columns: 1fr; }
-        .toolbar { flex-direction: column; align-items: stretch; }
-        .toolbar .field { width: 100%; }
-        .hero-actions { width: 100%; }
-        .hero-actions .btn { flex: 1; justify-content: center; }
+
+    .modal.show {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 700px;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+    }
+
+    .modal-header {
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 10;
+    }
+
+    .modal-header h2 {
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    .close-btn {
+        font-size: 24px;
+        cursor: pointer;
+        color: var(--text-light);
+        transition: color 0.2s ease;
+    }
+
+    .close-btn:hover {
+        color: var(--text);
+    }
+
+    .modal-body {
+        padding: 16px;
+    }
+
+    /* Form */
+    .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .full-width {
+        grid-column: 1 / -1;
+    }
+
+    .form-group {
+        margin-bottom: 12px;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-light);
+        margin-bottom: 4px;
+    }
+
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 13px;
+        outline: none;
+        transition: all 0.2s ease;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .form-group input[type="checkbox"] {
+        width: auto;
+        margin-right: 8px;
+    }
+
+    /* Harga Group */
+    .harga-group {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+    }
+
+    .harga-group-title {
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text);
+        margin-bottom: 8px;
+    }
+
+    .harga-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .harga-item label {
+        font-size: 11px;
+        color: var(--text-light);
+        display: block;
+        margin-bottom: 2px;
+    }
+
+    .harga-item input {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
+    /* Stok Awal Group */
+    .stok-awal-group {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 12px;
+    }
+
+    .stok-awal-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 8px;
+    }
+
+    /* Multi Satuan */
+    .multi-satuan-container {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 12px;
+    }
+
+    .sat-row {
+        display: grid;
+        grid-template-columns: 1fr 100px 30px;
+        gap: 8px;
+        margin-bottom: 8px;
+        align-items: center;
+    }
+
+    .sat-row input {
+        padding: 6px 8px;
+    }
+
+    .remove-sat {
+        padding: 6px;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .remove-sat:hover {
+        background: #fee2e2;
+        border-color: var(--danger);
+        color: var(--danger);
+    }
+
+    .add-sat-btn {
+        padding: 6px 12px;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .add-sat-btn:hover {
+        background: var(--bg);
+        border-color: var(--primary);
+        color: var(--primary);
+    }
+
+    .modal-footer {
+        padding: 16px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        position: sticky;
+        bottom: 0;
+        background: white;
+        z-index: 10;
+    }
+
+    /* Error States */
+    .field-error {
+        color: var(--danger);
+        font-size: 11px;
+        margin-top: 2px;
+        display: block;
+    }
+
+    .input-invalid {
+        border-color: var(--danger) !important;
+    }
+
+    .error-banner {
+        background: #fee2e2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        margin-bottom: 12px;
+        display: none;
+    }
+
+    .error-banner.show {
+        display: block;
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+        .metrics-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    @media (max-width: 768px) {
+        .metrics-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        
+        .search-container {
+            flex-direction: column;
+        }
+        
+        .filter-group {
+            flex-direction: column;
+        }
+        
+        .filter-select {
+            width: 100%;
+        }
+        
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .harga-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .stok-awal-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .metrics-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .header-section {
+            flex-direction: column;
+            gap: 12px;
+            align-items: flex-start;
+        }
     }
 </style>
 
 <div class="page">
-    <div class="container">
-        <div class="hero">
-            <div style="z-index:1;">
-                <p class="eyebrow">Inventori</p>
-                <h1>Master Barang</h1>
-                <p>Kelola katalog produk dengan cepat, lihat stok lintas gudang, dan jaga harga jual tetap sehat.</p>
-                <div class="hero-actions">
-                    <button class="btn btn-primary" onclick="openModal()">+ Tambah Produk</button>
-                    <button class="btn btn-ghost" onclick="exportData()">Export Excel</button>
-                </div>
-            </div>
-            <div class="metrics">
-                <div class="metric-card">
-                    <small>Total SKU</small>
-                    <div class="metric-value"><?=$totalProduk?></div>
-                    <div class="metric-trend"><?=$aktifProduk?> aktif</div>
-                </div>
-                <div class="metric-card">
-                    <small>Nilai Stok</small>
-                    <div class="metric-value"><?=formatRupiah($nilaiStok)?></div>
-                    <div class="metric-trend">Berbasis harga modal</div>
-                </div>
-                <div class="metric-card">
-                    <small>Stok Rendah</small>
-                    <div class="metric-value"><?=$lowStock?></div>
-                    <div class="metric-trend">Periksa & isi ulang</div>
-                </div>
-            </div>
+    <!-- Header Section -->
+    <div class="header-section">
+        <div class="header-title">
+            <h1>Master Barang</h1>
+            <p>Kelola data produk dan stok</p>
         </div>
+        <div class="header-actions">
+            <button class="btn btn-icon" onclick="exportData()" title="Export Excel">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+            </button>
+            <button class="btn btn-primary" onclick="openModal()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Tambah Produk
+            </button>
+        </div>
+    </div>
 
-        <div class="panel">
-            <form class="toolbar" method="get">
-                <div class="field" style="flex:1 1 280px">
-                    <span style="color:var(--muted);font-weight:700;">🔍</span>
-                    <input type="text" name="q" value="<?=htmlspecialchars($q)?>" placeholder="Cari nama, SKU, atau barcode">
-                </div>
-                <div class="field">
-                    <span style="color:var(--muted);font-weight:700;">Kategori</span>
-                    <select name="kat">
-                        <option value="">Semua</option>
-                        <?php foreach($kategori as $k): ?>
-                            <option value="<?=$k['kategori_id']?>" <?=$kat==$k['kategori_id']?'selected':''?>><?=htmlspecialchars($k['nama_kategori'])?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="field">
-                    <span style="color:var(--muted);font-weight:700;">Status</span>
-                    <select name="status">
-                        <option value="">Semua</option>
-                        <option value="1" <?=$status==='1'?'selected':''?>>Aktif</option>
-                        <option value="0" <?=$status==='0'?'selected':''?>>Nonaktif</option>
-                    </select>
-                </div>
-                <div class="pill-group">
-                    <?php
-                        $urlBase = strtok($_SERVER["REQUEST_URI"], '?');
-                        $params  = $_GET;
-                        $paramAll = $params; unset($paramAll['low']);
-                        $paramLow = $params; $paramLow['low'] = '1';
-                        $paramLive = $params; $paramLive['status'] = '1';
-                        function buildUrl($base, $query){ return $base . ($query ? '?'.http_build_query($query) : ''); }
-                    ?>
-                    <a class="pill <?=$low!== '1' ? 'active' : ''?>" href="<?=htmlspecialchars(buildUrl($urlBase, $paramAll))?>">Semua</a>
-                    <a class="pill <?=$status==='1'?'active':''?>" href="<?=htmlspecialchars(buildUrl($urlBase, $paramLive))?>">Aktif</a>
-                    <a class="pill <?=$low==='1'?'active':''?>" href="<?=htmlspecialchars(buildUrl($urlBase, $paramLow))?>">Stok Rendah</a>
-                </div>
-                <button type="submit" class="btn btn-outline" style="margin-left:auto;">Terapkan</button>
-            </form>
+    <!-- Metric Cards - Minimal -->
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="metric-label">Total SKU</div>
+            <div class="metric-value"><?=number_format($totalProduk)?></div>
+            <div class="metric-trend"><?=$aktifProduk?> aktif</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Nilai Stok</div>
+            <div class="metric-value"><?=formatRupiah($nilaiStok)?></div>
+            <div class="metric-trend">Harga modal</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Stok Rendah</div>
+            <div class="metric-value"><?=$lowStock?></div>
+            <div class="metric-trend">Perlu restock</div>
+        </div>
+    </div>
 
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Produk</th>
-                            <th>Kategori</th>
-                            <th>Supplier</th>
-                            <th>Harga Modal</th>
-                            <th>Harga Jual</th>
-                            <th>Beli Awal</th>
-                            <th>Beli Akhir</th>
-                            <th>Satuan & Batas</th>
-                            <th>Stok</th>
-                            <th>Status</th>
-                            <th style="text-align:right">Aksi</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($items as $it):
-                            $isLowStock = $it['stok_total'] <= $it['min_stok'];
-                        ?>
-                        <tr>
-                            <td>
-                                <div class="product-info">
-                            <?php
-                                $uploadBase = '../../uploads/produk/';
-                                $imgSrc = $it['foto']
-                                    ? $uploadBase.$it['foto']
-                                    : 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2748%27 height=%2748%27 viewBox=%270 0 48 48%27%3E%3Crect width=%2748%27 height=%2748%27 rx=%2712%27 fill=%27%23e2e8f0%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 text-anchor=%27middle%27 dy=%270.35em%27 font-family=%27Arial%27 font-size=%2710%27 fill=%27%2399a1b3%27%3ENo%20Img%3C/text%3E%3C/svg%3E';
-                            ?>
-                            <img src="<?= $imgSrc ?>" class="product-img" loading="lazy">
-                                    <div>
-                                        <div class="product-name"><?=htmlspecialchars($it['nama_produk'])?></div>
-                                        <div class="meta"><?=htmlspecialchars($it['sku'] ?: '-')?></div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td><?=htmlspecialchars($it['nama_kategori'] ?? '-')?></td>
-                            <td><?=htmlspecialchars($it['nama_supplier'] ?? '-')?></td>
-                            <td><?=formatRupiah($it['harga_modal'])?></td>
-                            <td><strong><?=formatRupiah($harga[$it['produk_id']]['ecer'] ?? 0)?></strong></td>
-                            <td class="meta"><?=isset($beli[$it['produk_id']]['awal']) ? formatRupiah($beli[$it['produk_id']]['awal']) : '-'?></td>
-                            <td class="meta"><?=isset($beli[$it['produk_id']]['akhir']) ? formatRupiah($beli[$it['produk_id']]['akhir']) : '-'?></td>
-                            <td>
-                                <div class="meta"><?=htmlspecialchars(implode(', ', $satuanProduk[(int)$it['produk_id']] ?? [$it['satuan']]))?></div>
-                                <div class="meta">Min <?=$it['min_stok']?> / Max <?=((int)$it['max_stok']>0 ? (int)$it['max_stok'] : '-')?></div>
-                            </td>
-                            <td>
-                                <span class="badge <?=$isLowStock ? 'badge-warning' : 'badge-muted'?>">
-                                    <?=$it['stok_total']?> <?=htmlspecialchars($it['satuan_nama'] ?? $it['satuan'])?>
-                                    <?=$isLowStock ? '• Rendah' : ''?>
-                                </span>
-                            </td>
-                            <td>
-                                <span class="badge <?=$it['aktif']?'badge-success':'badge-danger'?>">
-                                    <?=$it['aktif']?'Aktif':'Nonaktif'?>
-                                </span>
-                            </td>
-                            <td style="text-align:right">
-                                <button class="btn btn-outline" style="padding:6px 10px" onclick="editBarang(<?=$it['produk_id']?>)">Edit</button>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+    <!-- Search and Filter -->
+    <div class="search-container">
+        <div class="search-box">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="searchInput" placeholder="Cari nama, SKU, atau barcode..." value="<?=htmlspecialchars($q)?>" autocomplete="off">
+        </div>
+        <div class="filter-group">
+            <div class="filter-select">
+                <select id="kategoriFilter">
+                    <option value="">Semua Kategori</option>
+                    <?php foreach($kategori as $k): ?>
+                        <option value="<?=$k['kategori_id']?>" <?=$kat==$k['kategori_id']?'selected':''?>>
+                            <?=htmlspecialchars($k['nama_kategori'])?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="filter-select">
+                <select id="supplierFilter">
+                    <option value="">Semua Supplier</option>
+                    <?php foreach($supplier as $s): ?>
+                        <option value="<?=$s['supplier_id']?>" <?=((string)$supplierId === (string)$s['supplier_id']) ? 'selected' : ''?>>
+                            <?=htmlspecialchars($s['nama_supplier'])?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="status-pills">
+                <button class="status-pill <?=$status===''?'active':''?>" onclick="setStatus('')">Semua</button>
+                <button class="status-pill <?=$status==='1'?'active':''?>" onclick="setStatus('1')">Aktif</button>
+                <button class="status-pill <?=$status==='0'?'active':''?>" onclick="setStatus('0')">Nonaktif</button>
+                <button class="status-pill <?=$low==='1'?'active':''?>" onclick="setLowStock()">Stok Rendah</button>
             </div>
         </div>
     </div>
+
+    <!-- Table -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Produk</th>
+                    <th>Kategori</th>
+                    <th>Supplier</th>
+                    <th>Harga Modal</th>
+                    <th>Harga Jual</th>
+                    <th>Stok</th>
+                    <th>Satuan</th>
+                    <th>Status</th>
+                    <th style="text-align:right">Aksi</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <?php foreach($items as $it):
+                    $isLowStock = $it['stok_total'] <= $it['min_stok'];
+                ?>
+                <tr data-id="<?=$it['produk_id']?>">
+                    <td>
+                        <div class="product-name"><?=htmlspecialchars($it['nama_produk'])?></div>
+                        <div class="product-meta"><?=htmlspecialchars($it['sku'] ?: '-')?></div>
+                    </td>
+                    <td><?=htmlspecialchars($it['nama_kategori'] ?? '-')?></td>
+                    <td><?=htmlspecialchars($it['nama_supplier'] ?? '-')?></td>
+                    <td><?=formatRupiah($it['harga_modal'])?></td>
+                    <td><strong><?=formatRupiah($harga[$it['produk_id']]['ecer'] ?? 0)?></strong></td>
+                    <td>
+                        <span class="badge <?=$isLowStock ? 'badge-warning' : 'badge-muted'?>">
+                            <?=$it['stok_total']?>
+                        </span>
+                    </td>
+                    <td><?=htmlspecialchars($it['satuan'])?></td>
+                    <td>
+                        <span class="badge <?=$it['aktif'] ? 'badge-success' : 'badge-danger'?>">
+                            <?=$it['aktif'] ? 'Aktif' : 'Nonaktif'?>
+                        </span>
+                    </td>
+                    <td style="text-align:right">
+                        <button class="action-btn" onclick="editBarang(<?=$it['produk_id']?>)">Edit</button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        
+        <?php if($totalProduk > count($items)): ?>
+        <div class="load-more">
+            <button class="load-more-btn" id="loadMoreBtn" onclick="loadMore()">
+                <span id="loadMoreText">Muat lebih banyak</span>
+                <span id="loadMoreSpinner" class="loading-spinner"></span>
+            </button>
+        </div>
+        <?php endif; ?>
+    </div>
 </div>
 
+<!-- Modal -->
 <div id="productModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2 id="modalTitle" style="margin:0; font-size:18px;">Tambah Produk</h2>
-            <span style="cursor:pointer; font-size:24px" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Tambah Produk</h2>
+            <span class="close-btn" onclick="closeModal()">&times;</span>
         </div>
         <form id="barangForm">
             <div class="modal-body">
                 <input type="hidden" name="produk_id">
                 <input type="hidden" name="csrf_token" value="<?=htmlspecialchars($csrfToken)?>">
                 <div id="formErrorBanner" class="error-banner"></div>
+                
                 <div class="form-grid">
-                    <div>
-                        <label>Kode Produk</label>
-                        <input name="sku" required placeholder="Kode Produk">
-                        <div class="inline-actions">
-                            <button class="btn btn-outline" type="button" id="btnGenerateSku" style="padding:6px 10px;">Auto SKU</button>
-                        </div>
+                    <div class="form-group">
+                        <label>Kode SKU <span style="color:var(--danger);">*</span></label>
+                        <input type="text" name="sku" required placeholder="Contoh: PRD001">
+                        <button type="button" class="add-sat-btn" style="margin-top:4px;" onclick="generateSku()">Auto Generate</button>
                         <small class="field-error" data-for="sku"></small>
                     </div>
-                    <div class="full-width">
-                        <label>Nama Produk</label>
-                        <input name="nama_produk" required placeholder="Contoh: Kopi Susu Gula Aren">
-                        <small class="field-error" data-for="nama_produk"></small>
-                    </div>
-                    <div>
+                    
+                    <div class="form-group">
                         <label>Barcode</label>
-                        <input name="barcode" placeholder="Scan Barcode">
+                        <input type="text" name="barcode" placeholder="Scan barcode">
                         <small class="field-error" data-for="barcode"></small>
                     </div>
-                    <div>
-                        <label>Supplier</label>
-                        <div class="lookup-wrap">
-                            <input type="hidden" name="supplier_id" id="supplier_id" required>
-                            <input type="text" id="supplier_name" class="lookup-display" placeholder="Pilih supplier" readonly required>
-                            <button type="button" class="btn btn-outline" onclick="openSup()">🔍</button>
-                        </div>
+                    
+                    <div class="full-width form-group">
+                        <label>Nama Produk <span style="color:var(--danger);">*</span></label>
+                        <input type="text" name="nama_produk" required placeholder="Contoh: Kopi Susu Gula Aren">
+                        <small class="field-error" data-for="nama_produk"></small>
                     </div>
+                    
+                    <div class="form-group">
+                        <label>Supplier <span style="color:var(--danger);">*</span></label>
+                        <select name="supplier_id" id="supplier_id" required>
+                            <option value="">Pilih Supplier</option>
+                            <?php foreach($supplier as $s): ?>
+                                <option value="<?=$s['supplier_id']?>"><?=htmlspecialchars($s['nama_supplier'])?></option>
+                            <?php endforeach; ?>
+                        </select>
                         <small class="field-error" data-for="supplier_id"></small>
-                    <div>
-                        <label>Kategori</label>
-                        <div class="lookup-wrap">
-                            <input type="hidden" name="kategori_id" id="kategori_id" required>
-                            <input type="text" id="kategori_name" class="lookup-display" placeholder="Pilih kategori" readonly required>
-                            <button type="button" class="btn btn-outline" onclick="openKat()">🔍</button>
-                        </div>
                     </div>
+                    
+                    <div class="form-group">
+                        <label>Kategori <span style="color:var(--danger);">*</span></label>
+                        <select name="kategori_id" id="kategori_id" required>
+                            <option value="">Pilih Kategori</option>
+                            <?php foreach($kategori as $k): ?>
+                                <option value="<?=$k['kategori_id']?>"><?=htmlspecialchars($k['nama_kategori'])?></option>
+                            <?php endforeach; ?>
+                        </select>
                         <small class="field-error" data-for="kategori_id"></small>
-                    <div>
-                        <label>Satuan Dasar</label>
-                        <input name="satuan" required placeholder="Contoh: PCS">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Satuan Dasar <span style="color:var(--danger);">*</span></label>
+                        <input type="text" name="satuan" required placeholder="Contoh: PCS">
                         <small class="field-error" data-for="satuan"></small>
                     </div>
-                    <div class="full-width">
-                        <label>Multi Satuan (konversi ke satuan dasar)</label>
-                        <div id="multiSatuanList"></div>
-                        <button type="button" class="btn btn-outline" style="padding:5px 8px;margin-top:4px;" onclick="addSatuanRow()">+ Tambah Satuan</button>
-                        <div class="hint">Contoh: BOX isi 12 PCS, KARTON isi 24 BOX (isi selalu terhadap satuan dasar).</div>
-                        <small class="field-error" data-for="multi_satuan"></small>
-                    </div>
-                    <div>
-                        <label>Harga Ambil</label>
-                        <input type="number" name="harga_modal" min="0" step="0.01" required>
-                        <small class="field-error" data-for="harga_modal"></small>
-                    </div>
-                    <div>
-                        <label>Harga Jual (Ecer)</label>
-                        <input type="number" name="harga_ecer" min="0" step="0.01" required>
-                        <small class="field-error" data-for="harga_ecer"></small>
-                    </div>
-                    <div>
-                        <label>Harga Grosir</label>
-                        <input type="number" name="harga_grosir" min="0" step="0.01" required>
-                        <small class="field-error" data-for="harga_grosir"></small>
-                    </div>
-                    <div>
-                        <label>Harga Reseller</label>
-                        <input type="number" name="harga_reseller" min="0" step="0.01" required>
-                        <small class="field-error" data-for="harga_reseller"></small>
-                    </div>
-                    <div>
-                        <label>Harga Member</label>
-                        <input type="number" name="harga_member" min="0" step="0.01" required>
-                        <small class="field-error" data-for="harga_member"></small>
-                    </div>
-                    <div class="full-width">
-                        <label>Preview Harga + Pajak</label>
-                        <div class="price-preview" id="pricePreviewBox">
-                            <div class="item">Ecer: <strong id="preview_ecer">Rp 0</strong></div>
-                            <div class="item">Grosir: <strong id="preview_grosir">Rp 0</strong></div>
-                            <div class="item">Reseller: <strong id="preview_reseller">Rp 0</strong></div>
-                            <div class="item">Member: <strong id="preview_member">Rp 0</strong></div>
+                    
+                    <!-- Harga Group -->
+                    <div class="full-width harga-group">
+                        <div class="harga-group-title">💰 Harga</div>
+                        <div class="harga-grid">
+                            <div class="harga-item">
+                                <label>Harga Modal</label>
+                                <input type="number" name="harga_modal" min="0" step="100" required>
+                                <small class="field-error" data-for="harga_modal"></small>
+                            </div>
+                            <div class="harga-item">
+                                <label>Harga Ecer</label>
+                                <input type="number" name="harga_ecer" min="0" step="100" required>
+                                <small class="field-error" data-for="harga_ecer"></small>
+                            </div>
+                            <div class="harga-item">
+                                <label>Harga Grosir</label>
+                                <input type="number" name="harga_grosir" min="0" step="100" required>
+                                <small class="field-error" data-for="harga_grosir"></small>
+                            </div>
+                            <div class="harga-item">
+                                <label>Harga Reseller</label>
+                                <input type="number" name="harga_reseller" min="0" step="100" required>
+                                <small class="field-error" data-for="harga_reseller"></small>
+                            </div>
+                            <div class="harga-item">
+                                <label>Harga Member</label>
+                                <input type="number" name="harga_member" min="0" step="100" required>
+                                <small class="field-error" data-for="harga_member"></small>
+                            </div>
                         </div>
                     </div>
-                    <div>
-                        <label>Min. Stok (Peringatan)</label>
+                    
+                    <div class="form-group">
+                        <label>Min Stok</label>
                         <input type="number" name="min_stok" min="0" value="0">
                         <small class="field-error" data-for="min_stok"></small>
                     </div>
-                    <div>
-                        <label>Max. Stok</label>
+                    
+                    <div class="form-group">
+                        <label>Max Stok</label>
                         <input type="number" name="max_stok" min="0" value="0">
                         <small class="field-error" data-for="max_stok"></small>
                     </div>
-                    <div>
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
-                            <input type="checkbox" name="is_jasa" id="is_jasa" value="1" style="width:auto; margin:0">
-                            Produk Jasa (tanpa stok)
-                        </label>
+                    
+                    <!-- Multi Satuan -->
+                    <div class="full-width multi-satuan-container">
+                        <div class="harga-group-title">📦 Multi Satuan</div>
+                        <div id="multiSatuanList"></div>
+                        <button type="button" class="add-sat-btn" onclick="addSatuanRow()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            Tambah Satuan
+                        </button>
+                        <small class="field-error" data-for="multi_satuan"></small>
                     </div>
-                    <div>
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
-                            <input type="checkbox" name="is_konsinyasi" id="is_konsinyasi" value="1" style="width:auto; margin:0">
-                            Produk Konsinyasi
-                        </label>
-                    </div>
-                    <div class="full-width">
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
-                            <input type="checkbox" name="isi_stok_awal" id="isi_stok_awal" value="1" style="width:auto; margin:0">
-                            Isi stok awal?
-                        </label>
-                        <div class="hint">Jika dicentang, produk langsung dibuatkan saldo awal di gudang.</div>
-                    </div>
-                    <div class="full-width">
-                        <div id="stokAwalFields" class="collapse-card">
-                            <div class="form-grid">
+                    
+                    <!-- Stok Awal Group -->
+                    <div class="full-width stok-awal-group">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" name="isi_stok_awal" id="isi_stok_awal" value="1" style="width:auto;">
+                            <label for="isi_stok_awal" style="margin:0;">Isi Stok Awal</label>
+                        </div>
+                        
+                        <div id="stokAwalFields" style="display:none;">
+                            <div class="stok-awal-grid">
                                 <div>
                                     <label>Gudang</label>
                                     <select name="gudang_id" id="stok_awal_gudang">
-                                        <option value="">-- Pilih Gudang --</option>
+                                        <option value="">Pilih Gudang</option>
                                         <?php foreach($gudangList as $g): ?>
                                             <option value="<?=$g['gudang_id']?>" <?=$defaultGudangId===(int)$g['gudang_id']?'selected':''?>>
                                                 <?=htmlspecialchars($g['nama_gudang'])?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
-                                    <small class="field-error" data-for="stok_awal_gudang"></small>
                                 </div>
                                 <div>
-                                    <label>Qty Stok Awal</label>
+                                    <label>Qty</label>
                                     <input type="number" name="stok_awal_qty" id="stok_awal_qty" min="1" step="1" value="1">
-                                    <small class="field-error" data-for="stok_awal_qty"></small>
                                 </div>
                                 <div>
-                                    <label>Harga Modal Stok Awal</label>
-                                    <input type="number" name="stok_awal_harga_modal" id="stok_awal_harga_modal" min="0" step="0.01">
+                                    <label>Harga Modal</label>
+                                    <input type="number" name="stok_awal_harga_modal" id="stok_awal_harga_modal" min="0" step="100">
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <div>
-                        <label>Pajak</label>
+                    
+                    <div class="form-group">
+                        <label>Pajak (%)</label>
                         <select name="pajak_select" id="pajak_select">
-                            <option value="">-- Pilih Pajak --</option>
+                            <option value="0">Tanpa Pajak</option>
                             <?php foreach($pajakList as $p): ?>
-                                <option value="<?=htmlspecialchars($p['persen'])?>" data-id="<?=$p['pajak_id']?>">
-                                    <?=htmlspecialchars($p['nama'])?> (<?=number_format($p['persen'],2)?>%)
-                                </option>
+                                <option value="<?=$p['persen']?>"><?=htmlspecialchars($p['nama'])?> (<?=$p['persen']?>%)</option>
                             <?php endforeach; ?>
                             <option value="custom">Custom</option>
                         </select>
-                        <input type="number" step="0.01" min="0" max="100" name="pajak_persen" id="pajak_persen" value="0" style="margin-top:6px;" disabled>
+                        <input type="number" name="pajak_persen" id="pajak_persen" step="0.01" min="0" max="100" value="0" style="margin-top:4px; display:none;">
                     </div>
-                    <div class="full-width">
+                    
+                    <div class="form-group" style="display:flex; align-items:center; gap:16px;">
+                        <label style="display:flex; align-items:center; gap:4px;">
+                            <input type="checkbox" name="is_jasa" id="is_jasa" value="1"> Produk Jasa
+                        </label>
+                        <label style="display:flex; align-items:center; gap:4px;">
+                            <input type="checkbox" name="is_konsinyasi" id="is_konsinyasi" value="1"> Konsinyasi
+                        </label>
+                        <label style="display:flex; align-items:center; gap:4px;">
+                            <input type="checkbox" name="aktif" value="1" checked> Aktif
+                        </label>
+                    </div>
+                    
+                    <div class="full-width form-group">
                         <label>Foto Produk</label>
                         <input type="file" name="foto" accept="image/*">
-                        <div class="hint">Hanya JPG/PNG/WEBP/GIF. File berbahaya (PHP/SVG/script) akan ditolak.</div>
                         <small class="field-error" data-for="foto"></small>
-                    </div>
-                    <div class="full-width">
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
-                            <input type="checkbox" name="aktif" value="1" checked style="width:auto; margin:0"> Status Produk Aktif
-                        </label>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer" style="padding:8px 10px; border-top:1px solid var(--border); text-align:right">
-                <button type="button" class="btn btn-outline" onclick="closeModal()">Batal</button>
-                <button type="submit" class="btn btn-primary">Simpan Produk</button>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn-outline" onclick="closeModal()">Batal</button>
+                <button type="submit" class="btn-primary">Simpan Produk</button>
             </div>
         </form>
     </div>
 </div>
 
 <script>
-const modal = document.getElementById('productModal');
-const form  = document.getElementById('barangForm');
+// Data untuk lookup
+const supplierData = <?php echo json_encode($supplier, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+const kategoriData = <?php echo json_encode($kategori, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 const gudangData = <?php echo json_encode($gudangList, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
 const defaultGudangId = <?=(int)$defaultGudangId?>;
-const existingProduk = <?php
-    $dupeData = array_map(function($it){
-        return [
-            'produk_id' => (int)$it['produk_id'],
-            'sku' => (string)($it['sku'] ?? ''),
-            'barcode' => (string)($it['barcode'] ?? '')
-        ];
-    }, $items);
-    echo json_encode($dupeData, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-?>;
-const satuanMaster = <?php
-    $sat = array_map(fn($s)=>$s['nama'], $satuanList);
-    echo json_encode($sat, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT);
-?>;
+const satuanMaster = <?php echo json_encode(array_column($satuanList, 'nama'), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
+let currentPage = <?=$page?>;
+let totalProducts = <?=$totalProduk?>;
+let isLoading = false;
 
-function toNumber(v){
+// Modal elements
+const modal = document.getElementById('productModal');
+const form = document.getElementById('barangForm');
+const stokAwalCheck = document.getElementById('isi_stok_awal');
+const stokAwalFields = document.getElementById('stokAwalFields');
+const pajakSelect = document.getElementById('pajak_select');
+const pajakInput = document.getElementById('pajak_persen');
+const isJasaCheck = document.getElementById('is_jasa');
+
+// ==================== UTILITY FUNCTIONS ====================
+function toNumber(v) {
     const n = parseFloat(v);
     return Number.isFinite(n) ? n : 0;
 }
 
-function formatIdr(v){
+function formatIdr(v) {
     return new Intl.NumberFormat('id-ID').format(Math.max(0, Math.round(toNumber(v))));
 }
 
-function clearErrors(){
+function clearErrors() {
     document.querySelectorAll('.field-error').forEach(el => el.textContent = '');
     document.querySelectorAll('#barangForm .input-invalid').forEach(el => el.classList.remove('input-invalid'));
     const banner = document.getElementById('formErrorBanner');
-    if (banner) {
-        banner.style.display = 'none';
-        banner.textContent = '';
-    }
+    banner.classList.remove('show');
+    banner.textContent = '';
 }
 
-function setFieldError(fieldName, msg){
+function setFieldError(fieldName, msg) {
     const err = form.querySelector(`.field-error[data-for="${fieldName}"]`);
     if (err) err.textContent = msg;
-    const target = form[fieldName] || document.getElementById(fieldName);
-    if (target && target.classList) target.classList.add('input-invalid');
+    const target = form[fieldName];
+    if (target) target.classList.add('input-invalid');
 }
 
-function showFormError(msg){
+function showFormError(msg) {
     const banner = document.getElementById('formErrorBanner');
-    if (banner) {
-        banner.textContent = msg;
-        banner.style.display = 'block';
-    }
+    banner.textContent = msg;
+    banner.classList.add('show');
 }
 
-function updatePricePreview(){
-    const pajak = form.pajak_select?.value === 'custom' ? toNumber(form.pajak_persen?.value) : toNumber(form.pajak_select?.value);
-    const factor = 1 + (Math.max(0, pajak) / 100);
-    const val = (n) => `Rp ${formatIdr(toNumber(n) * factor)}`;
-    const map = {
-        ecer: form.harga_ecer?.value,
-        grosir: form.harga_grosir?.value,
-        reseller: form.harga_reseller?.value,
-        member: form.harga_member?.value
-    };
-    Object.keys(map).forEach(k => {
-        const el = document.getElementById(`preview_${k}`);
-        if (el) el.textContent = val(map[k]);
-    });
-}
-
-function addSatuanRow(nama = '', isi = '1'){
-    const wrap = document.getElementById('multiSatuanList');
-    if(!wrap) return;
-    const row = document.createElement('div');
-    row.className = 'sat-row';
-    const options = satuanMaster.map(s=>`<option value="${String(s).replace(/"/g,'&quot;')}"></option>`).join('');
-    row.innerHTML = `
-        <input name="multi_satuan_nama[]" placeholder="Nama Satuan (PCS/BOX/KARTON)" value="${String(nama).replace(/"/g,'&quot;')}" list="datalistSatuan">
-        <input type="number" name="multi_satuan_isi[]" min="0.0001" step="0.0001" value="${isi}">
-        <button type="button" class="btn btn-outline" style="padding:0" title="Hapus">x</button>
-    `;
-    row.querySelector('button').addEventListener('click', ()=>row.remove());
-    wrap.appendChild(row);
-    if (!document.getElementById('datalistSatuan')) {
-        const dl = document.createElement('datalist');
-        dl.id = 'datalistSatuan';
-        dl.innerHTML = options;
-        document.body.appendChild(dl);
-    }
-}
-
-function setMultiSatuan(data){
-    const wrap = document.getElementById('multiSatuanList');
-    if(!wrap) return;
-    wrap.innerHTML = '';
-    if(Array.isArray(data) && data.length){
-        data.forEach(s=>addSatuanRow(s.nama_satuan || '', s.qty_dasar || '1'));
-    } else {
-        addSatuanRow(form.satuan?.value || '', '1');
-    }
-}
-
-function applyJasaMode(){
-    const jasa = !!document.getElementById('is_jasa')?.checked;
-    if (jasa) {
-        if (form.min_stok) form.min_stok.value = 0;
-        if (form.max_stok) form.max_stok.value = 0;
-        const isi = document.getElementById('isi_stok_awal');
-        if (isi) isi.checked = false;
-        toggleStokAwal(false);
-    }
-    ['min_stok','max_stok','isi_stok_awal','stok_awal_gudang','stok_awal_qty','stok_awal_harga_modal'].forEach(id=>{
-        const el = document.getElementById(id) || form[id];
-        if (el) el.disabled = jasa;
-    });
-}
-
-function toggleStokAwal(forceValue = null){
-    const check = document.getElementById('isi_stok_awal');
-    const card = document.getElementById('stokAwalFields');
-    if(!check || !card) return;
-    if (typeof forceValue === 'boolean') check.checked = forceValue;
-    card.classList.toggle('show', check.checked);
-    if (check.checked && form.stok_awal_harga_modal && !form.stok_awal_harga_modal.value) {
-        form.stok_awal_harga_modal.value = form.harga_modal.value || 0;
-    }
-}
-
-function validateBusinessRules(){
-    clearErrors();
-    const id = parseInt(form.produk_id.value || '0', 10);
-    const sku = (form.sku.value || '').trim().toLowerCase();
-    const barcode = (form.barcode.value || '').trim().toLowerCase();
-    const hargaModal = toNumber(form.harga_modal.value);
-    const hargaEcer = toNumber(form.harga_ecer.value);
-    const hargaGrosir = toNumber(form.harga_grosir.value);
-    const hargaReseller = toNumber(form.harga_reseller.value);
-    const hargaMember = toNumber(form.harga_member.value);
-    const minStok = parseInt(form.min_stok.value || '0', 10);
-    const maxStok = parseInt(form.max_stok.value || '0', 10);
-    const isJasa = !!document.getElementById('is_jasa')?.checked;
-    const isiStokAwal = !!document.getElementById('isi_stok_awal')?.checked;
-    const gudangStokAwal = document.getElementById('stok_awal_gudang')?.value || '';
-    const qtyStokAwal = parseInt(document.getElementById('stok_awal_qty')?.value || '0', 10);
-    const errs = [];
-
-    if (!form.nama_produk.value.trim()) { errs.push('Nama produk wajib diisi.'); setFieldError('nama_produk','Wajib diisi'); }
-    if (!form.sku.value.trim()) { errs.push('SKU wajib diisi.'); setFieldError('sku','Wajib diisi'); }
-    if (!form.supplier_id.value) { errs.push('Supplier wajib dipilih.'); setFieldError('supplier_id','Wajib dipilih'); }
-    if (!form.kategori_id.value) { errs.push('Kategori wajib dipilih.'); setFieldError('kategori_id','Wajib dipilih'); }
-    if (!form.satuan.value.trim()) { errs.push('Satuan wajib diisi.'); setFieldError('satuan','Wajib diisi'); }
-    if (minStok < 0) { errs.push('Min stok tidak boleh negatif.'); setFieldError('min_stok','Tidak boleh negatif'); }
-    if (maxStok < 0) { errs.push('Max stok tidak boleh negatif.'); setFieldError('max_stok','Tidak boleh negatif'); }
-    if (maxStok > 0 && maxStok < minStok) { errs.push('Max stok tidak boleh lebih kecil dari min stok.'); setFieldError('max_stok','Harus >= min'); }
-    if (hargaModal < 0) { errs.push('Harga modal tidak boleh negatif.'); setFieldError('harga_modal','Tidak boleh negatif'); }
-    if (hargaEcer < hargaModal || hargaGrosir < hargaModal || hargaReseller < hargaModal || hargaMember < hargaModal) {
-        errs.push('Harga jual (ecer/grosir/reseller/member) tidak boleh lebih kecil dari harga modal.');
-        setFieldError('harga_ecer','Harus >= harga modal');
-        setFieldError('harga_grosir','Harus >= harga modal');
-        setFieldError('harga_reseller','Harus >= harga modal');
-        setFieldError('harga_member','Harus >= harga modal');
-    }
-    if (sku) {
-        const dupSku = existingProduk.some(p => (p.produk_id !== id) && (String(p.sku || '').toLowerCase() === sku));
-        if (dupSku) { errs.push('SKU sudah digunakan produk lain.'); setFieldError('sku','SKU duplikat'); }
-    }
-    if (barcode) {
-        const dupBarcode = existingProduk.some(p => (p.produk_id !== id) && (String(p.barcode || '').toLowerCase() === barcode));
-        if (dupBarcode) { errs.push('Barcode sudah digunakan produk lain.'); setFieldError('barcode','Barcode duplikat'); }
-    }
-    if (!isJasa && isiStokAwal) {
-        if (!gudangData.length) { errs.push('Belum ada gudang aktif. Tambahkan gudang terlebih dahulu.'); }
-        if (!gudangStokAwal) { errs.push('Pilih gudang untuk stok awal.'); setFieldError('stok_awal_gudang','Wajib dipilih'); }
-        if (qtyStokAwal <= 0) { errs.push('Qty stok awal harus lebih dari 0.'); setFieldError('stok_awal_qty','Harus > 0'); }
-    }
-    const satNama = [...document.querySelectorAll('input[name="multi_satuan_nama[]"]')].map(x=>x.value.trim().toUpperCase()).filter(Boolean);
-    const satIsi  = [...document.querySelectorAll('input[name="multi_satuan_isi[]"]')].map(x=>toNumber(x.value));
-    if (!satNama.length) {
-        errs.push('Minimal 1 baris multi satuan wajib diisi.');
-        setFieldError('multi_satuan','Minimal 1 satuan');
-    } else {
-        const dup = satNama.some((v,i)=>satNama.indexOf(v)!==i);
-        if (dup) {
-            errs.push('Nama satuan tidak boleh duplikat.');
-            setFieldError('multi_satuan','Nama satuan duplikat');
-        }
-        if (satIsi.some(v=>v<=0)) {
-            errs.push('Isi satuan harus lebih dari 0.');
-            setFieldError('multi_satuan','Isi harus > 0');
-        }
-    }
-    if (errs.length) {
-        showFormError(errs[0]);
-    }
-    return errs.length ? errs[0] : '';
-}
-
+// ==================== MODAL FUNCTIONS ====================
 function openModal() {
     form.reset();
     clearErrors();
     form.produk_id.value = '';
     document.getElementById('modalTitle').innerText = 'Tambah Produk';
-    if(form.pajak_select) form.pajak_select.value = '';
-    if(form.pajak_persen) form.pajak_persen.value = 0;
-    document.getElementById('supplier_name').value='';
-    form.supplier_id.value='';
-    document.getElementById('kategori_name').value='';
-    form.kategori_id.value='';
-    if (form.gudang_id && defaultGudangId > 0) form.gudang_id.value = String(defaultGudangId);
-    if (form.stok_awal_harga_modal) form.stok_awal_harga_modal.value = form.harga_modal.value || 0;
-    if (form.is_jasa) form.is_jasa.checked = false;
-    if (form.is_konsinyasi) form.is_konsinyasi.checked = false;
-    if (form.max_stok) form.max_stok.value = 0;
-    setMultiSatuan([]);
-    applyJasaMode();
-    toggleStokAwal(false);
-    updatePricePreview();
-    modal.style.display = "block";
-    if (form.barcode) form.barcode.focus();
+    
+    // Reset form
+    if (pajakSelect) pajakSelect.value = '0';
+    if (pajakInput) {
+        pajakInput.value = 0;
+        pajakInput.style.display = 'none';
+    }
+    
+    // Set default gudang
+    if (defaultGudangId > 0) {
+        document.getElementById('stok_awal_gudang').value = defaultGudangId;
+    }
+    
+    // Reset multi satuan
+    document.getElementById('multiSatuanList').innerHTML = '';
+    addSatuanRow();
+    
+    // Hide stok awal
+    stokAwalFields.style.display = 'none';
+    stokAwalCheck.checked = false;
+    
+    modal.classList.add('show');
+    form.sku.focus();
 }
 
 function closeModal() {
-    modal.style.display = "none";
+    modal.classList.remove('show');
 }
 
-async function editBarang(id){
-    const r = await fetch('../../../api/produk_get.php?id='+id);
-    const d = await r.json();
-    if(!d.ok){ showFormError(d.msg || 'Data produk tidak bisa dibuka'); return; }
+// ==================== SEARCH & FILTER ====================
+let searchTimeout;
+document.getElementById('searchInput').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        currentPage = 1;
+        performSearch();
+    }, 500);
+});
+
+document.getElementById('kategoriFilter').addEventListener('change', performSearch);
+document.getElementById('supplierFilter').addEventListener('change', performSearch);
+
+function setStatus(status) {
+    const url = new URL(window.location.href);
+    if (status === '') {
+        url.searchParams.delete('status');
+    } else {
+        url.searchParams.set('status', status);
+    }
+    url.searchParams.delete('low');
+    window.location.href = url.toString();
+}
+
+function setLowStock() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('low', '1');
+    url.searchParams.delete('status');
+    window.location.href = url.toString();
+}
+
+function performSearch() {
+    const url = new URL(window.location.href);
+    const searchTerm = document.getElementById('searchInput').value;
+    const kategori = document.getElementById('kategoriFilter').value;
+    const supplier = document.getElementById('supplierFilter').value;
     
-    document.getElementById('modalTitle').innerText = 'Edit Produk';
-    clearErrors();
-    for (const k in d.data) if (form[k]) form[k].value = d.data[k];
-    if(form.satuan) form.satuan.value = d.data.satuan || '';
-    if(form.supplier_id){
-        form.supplier_id.value = d.data.supplier_id || '';
-        document.getElementById('supplier_name').value = (supplierData.find(s=>s.supplier_id==d.data.supplier_id)?.nama_supplier) || '';
+    if (searchTerm) {
+        url.searchParams.set('q', searchTerm);
+    } else {
+        url.searchParams.delete('q');
     }
-    if(form.kategori_id){
-        form.kategori_id.value = d.data.kategori_id || '';
-        document.getElementById('kategori_name').value = (kategoriData.find(k=>k.kategori_id==d.data.kategori_id)?.nama_kategori) || '';
+    
+    if (kategori) {
+        url.searchParams.set('kat', kategori);
+    } else {
+        url.searchParams.delete('kat');
     }
-    // set pajak select by persen
-    if(form.pajak_select){
-        const target = [...form.pajak_select.options].find(o=>o.value==d.data.pajak_persen);
-        form.pajak_select.value = target ? target.value : 'custom';
-        if(form.pajak_persen) form.pajak_persen.value = d.data.pajak_persen ?? 0;
+    
+    if (supplier) {
+        url.searchParams.set('supplier', supplier);
+    } else {
+        url.searchParams.delete('supplier');
     }
-    if(form.harga_grosir) form.harga_grosir.value = d.data.harga_grosir ?? 0;
-    if(form.harga_reseller) form.harga_reseller.value = d.data.harga_reseller ?? 0;
-    if(form.harga_member) form.harga_member.value = d.data.harga_member ?? 0;
-    if(form.max_stok) form.max_stok.value = d.data.max_stok ?? 0;
-    setMultiSatuan(d.data.multi_satuan || []);
-    if(form.is_jasa) form.is_jasa.checked = Number(d.data.is_jasa || 0) === 1;
-    if(form.is_konsinyasi) form.is_konsinyasi.checked = Number(d.data.is_konsinyasi || 0) === 1;
-    applyJasaMode();
-    toggleStokAwal(false);
-    updatePricePreview();
-    form.aktif.checked = d.data.aktif == 1;
-    modal.style.display = "block";
-    if (form.barcode) form.barcode.focus();
+    
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
 }
 
-form.addEventListener('submit', async (e)=>{
+// ==================== LOAD MORE ====================
+function loadMore() {
+    if (isLoading) return;
+    
+    isLoading = true;
+    const loadMoreBtn = document.getElementById('loadMoreBtn');
+    const loadMoreText = document.getElementById('loadMoreText');
+    const loadMoreSpinner = document.getElementById('loadMoreSpinner');
+    
+    loadMoreText.style.display = 'none';
+    loadMoreSpinner.style.display = 'inline-block';
+    loadMoreBtn.disabled = true;
+    
+    const nextPage = currentPage + 1;
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', nextPage);
+    
+    fetch(url.toString(), {
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.text())
+    .then(html => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newRows = doc.querySelectorAll('#tableBody tr');
+        const tableBody = document.getElementById('tableBody');
+        
+        newRows.forEach(row => {
+            tableBody.appendChild(row.cloneNode(true));
+        });
+        
+        currentPage = nextPage;
+        
+        // Hide load more if no more data
+        if (currentPage * 50 >= totalProducts) {
+            document.querySelector('.load-more').style.display = 'none';
+        }
+    })
+    .catch(error => {
+        console.error('Error loading more:', error);
+        alert('Gagal memuat data. Silakan coba lagi.');
+    })
+    .finally(() => {
+        isLoading = false;
+        loadMoreText.style.display = 'inline';
+        loadMoreSpinner.style.display = 'none';
+        loadMoreBtn.disabled = false;
+    });
+}
+
+// ==================== PRODUCT CRUD ====================
+async function editBarang(id) {
+    try {
+        const response = await fetch(`../../../api/produk_get.php?id=${id}`);
+        const data = await response.json();
+        
+        if (!data.ok) {
+            throw new Error(data.msg || 'Gagal memuat data');
+        }
+        
+        document.getElementById('modalTitle').innerText = 'Edit Produk';
+        clearErrors();
+        
+        // Fill form
+        const product = data.data;
+        for (const key in product) {
+            if (form[key]) {
+                form[key].value = product[key];
+            }
+        }
+        
+        // Set selects
+        if (form.supplier_id) form.supplier_id.value = product.supplier_id || '';
+        if (form.kategori_id) form.kategori_id.value = product.kategori_id || '';
+        
+        // Set pajak
+        const pajakPersen = parseFloat(product.pajak_persen || 0);
+        if (pajakPersen > 0) {
+            const optionExists = [...pajakSelect.options].some(opt => opt.value == pajakPersen);
+            if (optionExists) {
+                pajakSelect.value = pajakPersen;
+                pajakInput.style.display = 'none';
+            } else {
+                pajakSelect.value = 'custom';
+                pajakInput.style.display = 'block';
+                pajakInput.value = pajakPersen;
+            }
+        } else {
+            pajakSelect.value = '0';
+            pajakInput.style.display = 'none';
+        }
+        
+        // Set checkboxes
+        form.aktif.checked = product.aktif == 1;
+        document.getElementById('is_jasa').checked = product.is_jasa == 1;
+        document.getElementById('is_konsinyasi').checked = product.is_konsinyasi == 1;
+        
+        // Set multi satuan
+        const multiSatuan = product.multi_satuan || [];
+        document.getElementById('multiSatuanList').innerHTML = '';
+        if (multiSatuan.length > 0) {
+            multiSatuan.forEach(s => addSatuanRow(s.nama_satuan, s.qty_dasar));
+        } else {
+            addSatuanRow(product.satuan, '1');
+        }
+        
+        // Handle jasa mode
+        applyJasaMode();
+        
+        modal.classList.add('show');
+        
+    } catch (error) {
+        alert('Gagal memuat data produk: ' + error.message);
+    }
+}
+
+form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const validationMsg = validateBusinessRules();
-    if(validationMsg){
+    
+    // Validate form
+    const validationMsg = validateForm();
+    if (validationMsg) {
+        showFormError(validationMsg);
         return;
     }
-    const fd = new FormData(form);
-    fd.set('aktif', form.aktif.checked ? 1 : 0);
-    fd.set('is_jasa', document.getElementById('is_jasa')?.checked ? 1 : 0);
-    fd.set('is_konsinyasi', document.getElementById('is_konsinyasi')?.checked ? 1 : 0);
-    if(!document.getElementById('isi_stok_awal')?.checked){
-        fd.set('isi_stok_awal', 0);
-        fd.delete('gudang_id');
-        fd.delete('stok_awal_qty');
-        fd.delete('stok_awal_harga_modal');
+    
+    // Submit form
+    const formData = new FormData(form);
+    formData.set('aktif', form.aktif.checked ? 1 : 0);
+    formData.set('is_jasa', document.getElementById('is_jasa').checked ? 1 : 0);
+    formData.set('is_konsinyasi', document.getElementById('is_konsinyasi').checked ? 1 : 0);
+    
+    // Handle stok awal
+    if (!stokAwalCheck.checked) {
+        formData.delete('gudang_id');
+        formData.delete('stok_awal_qty');
+        formData.delete('stok_awal_harga_modal');
     }
-    const satNama = [...document.querySelectorAll('input[name="multi_satuan_nama[]"]')];
-    const satIsi = [...document.querySelectorAll('input[name="multi_satuan_isi[]"]')];
-    fd.delete('multi_satuan_nama[]');
-    fd.delete('multi_satuan_isi[]');
-    satNama.forEach((n,i)=>{
-        const nama = (n.value || '').trim();
-        const isi = satIsi[i] ? satIsi[i].value : '';
-        if (nama !== '') {
-            fd.append('multi_satuan_nama[]', nama);
-            fd.append('multi_satuan_isi[]', isi || '1');
+    
+    // Handle multi satuan
+    const satRows = document.querySelectorAll('.sat-row');
+    formData.delete('multi_satuan_nama[]');
+    formData.delete('multi_satuan_isi[]');
+    
+    satRows.forEach(row => {
+        const nama = row.querySelector('input[name="multi_satuan_nama[]"]').value.trim();
+        const isi = row.querySelector('input[name="multi_satuan_isi[]"]').value;
+        if (nama) {
+            formData.append('multi_satuan_nama[]', nama);
+            formData.append('multi_satuan_isi[]', isi || '1');
         }
     });
-    // ensure pajak_persen populated
-    if(form.pajak_select){
-        if(form.pajak_select.value !== 'custom'){
-            fd.set('pajak_persen', form.pajak_select.value || 0);
+    
+    // Handle pajak
+    if (pajakSelect.value === 'custom') {
+        formData.set('pajak_persen', pajakInput.value || 0);
+    } else {
+        formData.set('pajak_persen', pajakSelect.value || 0);
+    }
+    
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Menyimpan...';
+    submitBtn.disabled = true;
+    
+    try {
+        const response = await fetch('../../../api/produk_save.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.ok) {
+            window.location.reload();
         } else {
-            fd.set('pajak_persen', form.pajak_persen.value || 0);
+            throw new Error(result.msg || 'Gagal menyimpan');
+        }
+    } catch (error) {
+        showFormError(error.message);
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+    }
+});
+
+function validateForm() {
+    clearErrors();
+    
+    const errors = [];
+    
+    // Required fields
+    if (!form.sku.value.trim()) {
+        errors.push('SKU wajib diisi');
+        setFieldError('sku', 'Wajib diisi');
+    }
+    
+    if (!form.nama_produk.value.trim()) {
+        errors.push('Nama produk wajib diisi');
+        setFieldError('nama_produk', 'Wajib diisi');
+    }
+    
+    if (!form.supplier_id.value) {
+        errors.push('Supplier wajib dipilih');
+        setFieldError('supplier_id', 'Wajib dipilih');
+    }
+    
+    if (!form.kategori_id.value) {
+        errors.push('Kategori wajib dipilih');
+        setFieldError('kategori_id', 'Wajib dipilih');
+    }
+    
+    if (!form.satuan.value.trim()) {
+        errors.push('Satuan wajib diisi');
+        setFieldError('satuan', 'Wajib diisi');
+    }
+    
+    // Harga validations
+    const hargaModal = toNumber(form.harga_modal.value);
+    const hargaEcer = toNumber(form.harga_ecer.value);
+    
+    if (hargaModal < 0) {
+        errors.push('Harga modal tidak boleh negatif');
+        setFieldError('harga_modal', 'Tidak boleh negatif');
+    }
+    
+    if (hargaEcer < hargaModal) {
+        errors.push('Harga ecer tidak boleh lebih kecil dari harga modal');
+        setFieldError('harga_ecer', 'Harus >= harga modal');
+    }
+    
+    // Stok validations
+    const minStok = parseInt(form.min_stok.value || '0');
+    const maxStok = parseInt(form.max_stok.value || '0');
+    
+    if (minStok < 0) {
+        errors.push('Min stok tidak boleh negatif');
+        setFieldError('min_stok', 'Tidak boleh negatif');
+    }
+    
+    if (maxStok < 0) {
+        errors.push('Max stok tidak boleh negatif');
+        setFieldError('max_stok', 'Tidak boleh negatif');
+    }
+    
+    if (maxStok > 0 && maxStok < minStok) {
+        errors.push('Max stok tidak boleh lebih kecil dari min stok');
+        setFieldError('max_stok', 'Harus >= min stok');
+    }
+    
+    // Multi satuan validation
+    const satNama = [...document.querySelectorAll('input[name="multi_satuan_nama[]"]')]
+        .map(x => x.value.trim().toUpperCase())
+        .filter(Boolean);
+    
+    if (satNama.length === 0) {
+        errors.push('Minimal satu satuan harus diisi');
+        setFieldError('multi_satuan', 'Minimal satu satuan');
+    }
+    
+    const satDuplicates = satNama.some((v, i) => satNama.indexOf(v) !== i);
+    if (satDuplicates) {
+        errors.push('Nama satuan tidak boleh duplikat');
+        setFieldError('multi_satuan', 'Nama satuan duplikat');
+    }
+    
+    const satIsi = [...document.querySelectorAll('input[name="multi_satuan_isi[]"]')]
+        .map(x => toNumber(x.value));
+    
+    if (satIsi.some(v => v <= 0)) {
+        errors.push('Isi satuan harus lebih dari 0');
+        setFieldError('multi_satuan', 'Isi harus > 0');
+    }
+    
+    // Stok awal validation
+    if (stokAwalCheck.checked && !document.getElementById('is_jasa').checked) {
+        if (!document.getElementById('stok_awal_gudang').value) {
+            errors.push('Pilih gudang untuk stok awal');
+        }
+        
+        const qty = parseInt(document.getElementById('stok_awal_qty').value);
+        if (qty <= 0) {
+            errors.push('Qty stok awal harus lebih dari 0');
         }
     }
     
-    // UI Feedback
-    const btn = form.querySelector('button[type="submit"]');
-    btn.innerText = 'Menyimpan...';
-    btn.disabled = true;
+    return errors.length ? errors[0] : '';
+}
 
-    try {
-        const r = await fetch('../../../api/produk_save.php', {method:'POST', body: fd});
-        if(!r.ok) throw new Error('Gagal menyimpan (HTTP '+r.status+')');
-        const d = await r.json();
-        if(!d.ok) throw new Error(d.msg || 'Gagal menyimpan');
-        location.reload();
-    } catch(err){
-        showFormError(err.message || 'Gagal menyimpan');
-    } finally {
-        btn.innerText = 'Simpan Produk';
-        btn.disabled = false;
+// ==================== UI HELPERS ====================
+function generateSku() {
+    const nama = form.nama_produk.value || 'PRD';
+    const prefix = nama.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3) || 'PRD';
+    const timestamp = Date.now().toString().slice(-6);
+    form.sku.value = `${prefix}${timestamp}`;
+}
+
+function addSatuanRow(nama = '', isi = '1') {
+    const container = document.getElementById('multiSatuanList');
+    const row = document.createElement('div');
+    row.className = 'sat-row';
+    
+    row.innerHTML = `
+        <input type="text" name="multi_satuan_nama[]" placeholder="Nama Satuan" value="${nama}" list="satuanDatalist">
+        <input type="number" name="multi_satuan_isi[]" min="0.0001" step="0.0001" value="${isi}" placeholder="Isi">
+        <button type="button" class="remove-sat" onclick="this.parentElement.remove()">✕</button>
+    `;
+    
+    container.appendChild(row);
+}
+
+function applyJasaMode() {
+    const isJasa = isJasaCheck.checked;
+    
+    if (isJasa) {
+        form.min_stok.value = 0;
+        form.max_stok.value = 0;
+        stokAwalCheck.checked = false;
+        stokAwalFields.style.display = 'none';
+    }
+    
+    form.min_stok.disabled = isJasa;
+    form.max_stok.disabled = isJasa;
+    stokAwalCheck.disabled = isJasa;
+}
+
+// Event listeners
+stokAwalCheck.addEventListener('change', function() {
+    stokAwalFields.style.display = this.checked ? 'block' : 'none';
+    if (this.checked && !form.stok_awal_harga_modal.value) {
+        form.stok_awal_harga_modal.value = form.harga_modal.value || 0;
     }
 });
 
-function exportData() {
-    alert('Fitur Export ke Excel sedang disiapkan.');
-    // Di sini Anda bisa mengarahkan ke script PHP yang menghasilkan format .xlsx
-}
-
-window.onclick = function(event) {
-    if (event.target == modal) closeModal();
-}
-
-// Pajak select behavior
-const pajakSelect = document.getElementById('pajak_select');
-const pajakInput = document.getElementById('pajak_persen');
-if(pajakSelect){
-    pajakSelect.addEventListener('change', ()=>{
-        if(pajakSelect.value === 'custom'){
-            pajakInput.removeAttribute('disabled');
-            pajakInput.value = pajakInput.value || 0;
-            pajakInput.type = 'number';
-            pajakInput.step = '0.01';
-        } else {
-            pajakInput.value = pajakSelect.value || 0;
-            pajakInput.setAttribute('disabled','disabled');
-        }
-        updatePricePreview();
-    });
-}
-['harga_modal','harga_ecer','harga_grosir','harga_reseller','harga_member','pajak_persen'].forEach(name=>{
-    if (form[name]) form[name].addEventListener('input', updatePricePreview);
+pajakSelect.addEventListener('change', function() {
+    if (this.value === 'custom') {
+        pajakInput.style.display = 'block';
+    } else {
+        pajakInput.style.display = 'none';
+        pajakInput.value = this.value || 0;
+    }
 });
-const jasaCheck = document.getElementById('is_jasa');
-if (jasaCheck) jasaCheck.addEventListener('change', applyJasaMode);
-const btnGenerateSku = document.getElementById('btnGenerateSku');
-if (btnGenerateSku) {
-    btnGenerateSku.addEventListener('click', ()=>{
-        const base = (form.nama_produk?.value || 'PRD').toUpperCase().replace(/[^A-Z0-9]+/g,'').slice(0,6) || 'PRD';
-        const stamp = Date.now().toString().slice(-6);
-        form.sku.value = `${base}${stamp}`;
+
+isJasaCheck.addEventListener('change', applyJasaMode);
+
+// Initialize
+if (!document.getElementById('satuanDatalist')) {
+    const datalist = document.createElement('datalist');
+    datalist.id = 'satuanDatalist';
+    satuanMaster.forEach(sat => {
+        const option = document.createElement('option');
+        option.value = sat;
+        datalist.appendChild(option);
     });
-}
-const stokAwalCheck = document.getElementById('isi_stok_awal');
-if(stokAwalCheck){
-    stokAwalCheck.addEventListener('change', ()=>toggleStokAwal());
-}
-if(form.harga_modal && form.stok_awal_harga_modal){
-    form.harga_modal.addEventListener('input', ()=>{
-        if(!form.stok_awal_harga_modal.value){
-            form.stok_awal_harga_modal.value = form.harga_modal.value || 0;
-        }
-    });
+    document.body.appendChild(datalist);
 }
 
-// Supplier lookup modal (same pattern as PO)
-const supplierData = <?php echo json_encode($supplier, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
-const supModal = document.createElement('div');
-supModal.className='modal';
-supModal.id='supModal';
-supModal.innerHTML = `
-  <div class="modal-content" style="max-width:460px;display:flex;flex-direction:column;">
-    <div class="modal-header">
-      <h3 style="margin:0;">Pilih Supplier</h3>
-      <span style="cursor:pointer;font-size:22px;" id="supClose">&times;</span>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="supSearch" placeholder="Cari supplier..." style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;">
-      <div style="max-height:320px;overflow:auto;margin-top:10px;">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr><th style="text-align:left;padding:8px;">Nama</th></tr></thead>
-          <tbody id="supBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>`;
-document.body.appendChild(supModal);
+// Close modal when clicking outside
+window.addEventListener('click', function(event) {
+    if (event.target === modal) {
+        closeModal();
+    }
+});
 
-function openSup(){ document.getElementById('supSearch').value=''; renderSup(); supModal.style.display='flex'; }
-function closeSup(){ supModal.style.display='none'; }
-document.getElementById('supClose').onclick=closeSup;
-window.addEventListener('click',(e)=>{ if(e.target===supModal) closeSup(); });
-
-function renderSup(){
-    const term = document.getElementById('supSearch').value.toLowerCase();
-    const body = document.getElementById('supBody');
-    body.innerHTML='';
-    supplierData.filter(s=>(s.nama_supplier||'').toLowerCase().includes(term)).slice(0,100).forEach(s=>{
-        const tr=document.createElement('tr');
-        tr.innerHTML=`<td style="padding:8px;cursor:pointer;">${s.nama_supplier}</td>`;
-        tr.onclick=()=>{
-            form.supplier_id.value = s.supplier_id;
-            document.getElementById('supplier_name').value = s.nama_supplier;
-            closeSup();
-        };
-        body.appendChild(tr);
-    });
-}
-
-// Kategori lookup modal
-const kategoriData = <?php echo json_encode($kategori, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
-const katModal = document.createElement('div');
-katModal.className='modal';
-katModal.id='katModal';
-katModal.innerHTML = `
-  <div class="modal-content" style="max-width:460px;display:flex;flex-direction:column;">
-    <div class="modal-header">
-      <h3 style="margin:0;">Pilih Kategori</h3>
-      <span style="cursor:pointer;font-size:22px;" id="katClose">&times;</span>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="katSearch" placeholder="Cari kategori..." style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;">
-      <div style="max-height:320px;overflow:auto;margin-top:10px;">
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr><th style="text-align:left;padding:8px;">Nama</th></tr></thead>
-          <tbody id="katBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>`;
-document.body.appendChild(katModal);
-function openKat(){ document.getElementById('katSearch').value=''; renderKat(); katModal.style.display='flex'; }
-function closeKat(){ katModal.style.display='none'; }
-document.getElementById('katClose').onclick=closeKat;
-window.addEventListener('click',(e)=>{ if(e.target===katModal) closeKat(); });
-function renderKat(){
-    const term = document.getElementById('katSearch').value.toLowerCase();
-    const body = document.getElementById('katBody');
-    body.innerHTML='';
-    kategoriData.filter(k=>(k.nama_kategori||'').toLowerCase().includes(term)).slice(0,100).forEach(k=>{
-        const tr=document.createElement('tr');
-        tr.innerHTML=`<td style="padding:8px;cursor:pointer;">${k.nama_kategori}</td>`;
-        tr.onclick=()=>{
-            form.kategori_id.value = k.kategori_id;
-            document.getElementById('kategori_name').value = k.nama_kategori;
-            closeKat();
-        };
-        body.appendChild(tr);
-    });
+// Export function
+function exportData() {
+    const url = new URL(window.location.href);
+    url.pathname = url.pathname.replace('produk', 'export_produk');
+    window.location.href = url.toString();
 }
 </script>
 </html>
-
-

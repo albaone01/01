@@ -8,11 +8,67 @@ require_once '../../../inc/functions.php';
 requireLogin();
 requireDevice();
 
-$piutangs = [
-    ['customer' => 'Budi Setiawan', 'nomor' => 'INV-2402-015', 'jatuh_tempo' => '2026-02-25', 'saldo' => 420000, 'status' => 'Due Soon'],
-    ['customer' => 'Andi Wijaya', 'nomor' => 'INV-2402-010', 'jatuh_tempo' => '2026-02-28', 'saldo' => 1150000, 'status' => 'Open'],
-    ['customer' => 'Walk-in', 'nomor' => 'INV-2402-006', 'jatuh_tempo' => '2026-02-18', 'saldo' => 180000, 'status' => 'Overdue'],
-];
+$db = $pos_db;
+$tokoId = (int)($_SESSION['toko_id'] ?? 0);
+$q = trim((string)($_GET['q'] ?? ''));
+
+$piutangs = [];
+$totalPiutang = 0.0;
+$jumlahPiutang = 0;
+$jumlahOverdue = 0;
+
+if ($tokoId > 0) {
+    $where = [
+        "pj.toko_id = ?",
+        "pt.sisa > 0",
+        "pt.status <> 'lunas'"
+    ];
+    $types = "i";
+    $params = [$tokoId];
+
+    if ($q !== '') {
+        $where[] = "(pj.nomor_invoice LIKE CONCAT('%',?,'%') OR COALESCE(pl.nama_pelanggan,'') LIKE CONCAT('%',?,'%'))";
+        $types .= "ss";
+        $params[] = $q;
+        $params[] = $q;
+    }
+
+    $sql = "
+        SELECT
+            pt.piutang_id,
+            pt.penjualan_id,
+            pt.total,
+            pt.sisa,
+            COALESCE(pl.nama_pelanggan, 'Walk-in') AS customer,
+            pj.nomor_invoice AS nomor,
+            DATE(pj.dibuat_pada) AS tanggal_invoice,
+            DATE_ADD(
+                DATE(pj.dibuat_pada),
+                INTERVAL COALESCE(NULLIF(ptk.masa_tenggang,0), 30) DAY
+            ) AS jatuh_tempo
+        FROM piutang pt
+        INNER JOIN penjualan pj ON pj.penjualan_id = pt.penjualan_id
+        LEFT JOIN pelanggan pl ON pl.pelanggan_id = pt.pelanggan_id AND pl.deleted_at IS NULL
+        LEFT JOIN pelanggan_toko ptk ON ptk.pelanggan_id = pt.pelanggan_id AND ptk.toko_id = pj.toko_id AND ptk.deleted_at IS NULL
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY jatuh_tempo ASC, pt.piutang_id DESC
+        LIMIT 300
+    ";
+
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    if ($res) $piutangs = $res->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $totalPiutang = array_reduce($piutangs, fn($c, $r) => $c + (float)$r['sisa'], 0.0);
+    $jumlahPiutang = count($piutangs);
+    $today = date('Y-m-d');
+    foreach ($piutangs as $row) {
+        if (!empty($row['jatuh_tempo']) && $row['jatuh_tempo'] < $today) $jumlahOverdue++;
+    }
+}
 
 function rupiah($v){ return 'Rp ' . number_format((float)$v,0,',','.'); }
 ?>
@@ -43,6 +99,7 @@ function rupiah($v){ return 'Rp ' . number_format((float)$v,0,',','.'); }
         .btn-ghost{background:#eef2f7; color:var(--text);} 
         .card{background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 14px 36px rgba(15,23,42,0.08); padding:18px;}
         .panel{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:12px;}
+        .metric{font-size:28px; font-weight:700; line-height:1.1; margin-top:8px;}
         .muted{color:var(--muted); font-size:13px;}
         table{width:100%; border-collapse:collapse; margin-top:10px;}
         th, td{padding:12px 10px; border-bottom:1px solid var(--border); text-align:left; font-size:13px;}
@@ -64,6 +121,8 @@ function rupiah($v){ return 'Rp ' . number_format((float)$v,0,',','.'); }
             <div class="muted">Pantau saldo piutang, jatuh tempo, dan prioritas penagihan.</div>
         </div>
         <div class="actions">
+            <input type="text" id="q" placeholder="Cari invoice / customer" value="<?=htmlspecialchars($q)?>" style="padding:10px 12px; border:1px solid var(--border); border-radius:10px; min-width:220px;">
+            <button class="btn btn-ghost" onclick="window.location.href='?q='+encodeURIComponent(document.getElementById('q').value)">Cari</button>
             <button class="btn btn-outline" onclick="window.location.href='../penjualan/index.php'">Daftar Penjualan</button>
             <button class="btn btn-primary" onclick="window.location.href='../piutang_pembayaran/index.php'">Catat Pembayaran</button>
         </div>
@@ -71,22 +130,14 @@ function rupiah($v){ return 'Rp ' . number_format((float)$v,0,',','.'); }
 
     <div class="panel">
         <div class="card">
-            <div style="font-weight:700;">Tagihan Jatuh Tempo</div>
-            <p class="muted" style="margin-top:6px;">Follow up invoice mendekati jatuh tempo agar cashflow terjaga.</p>
-            <ul class="muted" style="margin:8px 0 0 18px;">
-                <li>Reminder WA/Email otomatis</li>
-                <li>Riwayat kontak penagihan</li>
-                <li>Prioritas berdasar nominal & umur</li>
-            </ul>
+            <div style="font-weight:700;">Total Piutang Berjalan</div>
+            <div class="metric"><?=rupiah($totalPiutang)?></div>
+            <p class="muted" style="margin-top:8px;"><?=$jumlahPiutang?> invoice belum lunas.</p>
         </div>
         <div class="card">
-            <div style="font-weight:700;">Kebijakan Kredit</div>
-            <p class="muted" style="margin-top:6px;">Batas kredit per customer, grace period, dan denda keterlambatan.</p>
-            <ul class="muted" style="margin:8px 0 0 18px;">
-                <li>Credit limit & blocking otomatis</li>
-                <li>Approval manager jika overlimit</li>
-                <li>Simulasi denda harian</li>
-            </ul>
+            <div style="font-weight:700;">Tagihan Overdue</div>
+            <div class="metric"><?=$jumlahOverdue?></div>
+            <p class="muted" style="margin-top:8px;">Piutang lewat jatuh tempo (berdasarkan tempo customer).</p>
         </div>
     </div>
 
@@ -107,15 +158,27 @@ function rupiah($v){ return 'Rp ' . number_format((float)$v,0,',','.'); }
                 <?php if(empty($piutangs)): ?>
                     <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:18px;">Tidak ada piutang.</td></tr>
                 <?php else: foreach($piutangs as $p): ?>
+                    <?php
+                        $statusUi = 'Open';
+                        if (!empty($p['jatuh_tempo'])) {
+                            $todayTs = strtotime(date('Y-m-d'));
+                            $dueTs = strtotime((string)$p['jatuh_tempo']);
+                            if ($dueTs < $todayTs) {
+                                $statusUi = 'Overdue';
+                            } elseif ($dueTs <= strtotime('+3 days', $todayTs)) {
+                                $statusUi = 'Due Soon';
+                            }
+                        }
+                    ?>
                     <tr>
                         <td><?=htmlspecialchars($p['customer']);?></td>
                         <td><?=htmlspecialchars($p['nomor']);?></td>
                         <td><?=htmlspecialchars($p['jatuh_tempo']);?></td>
-                        <td><?=rupiah($p['saldo']);?></td>
+                        <td><?=rupiah($p['sisa']);?></td>
                         <td>
-                            <?php if($p['status']==='Overdue'): ?>
+                            <?php if($statusUi==='Overdue'): ?>
                                 <span class="pill red"><i class="fa-solid fa-circle"></i> Overdue</span>
-                            <?php elseif($p['status']==='Due Soon'): ?>
+                            <?php elseif($statusUi==='Due Soon'): ?>
                                 <span class="pill amber"><i class="fa-solid fa-circle"></i> Due Soon</span>
                             <?php else: ?>
                                 <span class="pill green"><i class="fa-solid fa-circle"></i> Open</span>

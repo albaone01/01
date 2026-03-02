@@ -17,7 +17,7 @@ $stmt = $pos_db->prepare("SELECT p.produk_id, p.nama_produk, p.sku, p.barcode, p
                                  s.satuan_id
                           FROM produk p
                           LEFT JOIN satuan s ON s.nama = p.satuan
-                          WHERE p.produk_id=? AND p.toko_id=? LIMIT 1");
+                          WHERE p.produk_id=? AND p.toko_id=? AND p.deleted_at IS NULL LIMIT 1");
 $stmt->bind_param("ii", $id, $tokoId);
 $stmt->execute();
 $res = $stmt->get_result();
